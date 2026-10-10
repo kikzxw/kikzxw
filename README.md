@@ -14,7 +14,7 @@ Ouvrez ensuite l'adresse affichée dans la console (par défaut `http://<hôte>:
 
 L'historique reste en mémoire dans l'onglet et disparaît lors de son rechargement. Chaque entrée conserve ses critères et sa réponse en mémoire : le bouton « Ouvrir » restaure la recherche et ses résultats sans relancer la requête. Les résultats ne sont pas sauvegardés sur le serveur.
 La carte des résultats est un planisphère vectoriel sombre assorti à l'interface, avec les frontières des pays et les points des coordonnées source ou des villes reconnues localement. Les contours World Atlas / Natural Earth sont chargés une fois depuis jsDelivr puis dessinés dans le navigateur; aucun fournisseur ne reçoit les lieux recherchés et aucune adresse n'est envoyée pour géocodage. La carte permet le zoom sur les marqueurs, le déplacement, le recadrage et le zoom sur une zone après un appui maintenu de deux secondes. La barre latérale se réduit en rail d'icônes. Le tableau de bord comprend une animation Matrix et une horloge Peaclock avec affichage 12 h ou 24 h.
-Les comptes et les sessions sont gérés côté serveur. Le premier compte administrateur doit être provisionné par l'exploitant avec un jeton secret à usage unique; une inscription publique ne peut pas s'attribuer ce rôle. Après ce provisionnement, les inscriptions normales créent des membres. Les mots de passe sont hachés et les sessions sont protégées par cookie HTTP-only. Node.js utilise scrypt; Cloudflare utilise PBKDF2-SHA-256. En mode Node.js, les comptes sont enregistrés dans `DATA_DIR` (par défaut `data/`); sur Cloudflare, les comptes, sessions et recherches enregistrées sont conservés dans le stockage SQLite persistant d'un Durable Object.
+Les comptes et les sessions sont gérés côté serveur. Le premier compte administrateur doit être provisionné par l'exploitant avec un jeton secret à usage unique; une inscription publique ne peut pas s'attribuer ce rôle. Après ce provisionnement, les inscriptions normales créent des membres. Les mots de passe sont hachés et les sessions sont protégées par cookie HTTP-only. Node.js utilise scrypt; Cloudflare utilise PBKDF2-SHA-256. En mode Node.js, comptes, sessions et recherches enregistrées sont persistés dans `DATA_DIR` (par défaut `data/`), avec écritures atomiques, fichiers privés et sauvegarde de la version précédente. Pour conserver les données après remplacement ou redémarrage du serveur, configure `DATA_DIR` sur un volume persistant. Sur Cloudflare, les comptes, sessions et recherches enregistrées sont conservés dans le stockage SQLite persistant d'un Durable Object.
 
 Pour créer le premier administrateur, générez et conservez un jeton aléatoire d'au moins 32 octets dans un gestionnaire de secrets, puis configurez-le comme `ADMIN_BOOTSTRAP_TOKEN`. Après le démarrage du serveur (ou le déploiement et la configuration du secret Cloudflare), envoyez une seule inscription contenant ce jeton :
 
@@ -32,6 +32,7 @@ Cette route ne consomme le jeton que si aucun compte n'existe; les comptes suiva
 | --- | --- | --- |
 | `HOST` | `0.0.0.0` | Adresse d'écoute. Utilisez `127.0.0.1` pour un usage exclusivement local. |
 | `PORT` | `3000` | Port d'écoute. |
+| `DATA_DIR` | `data/` | Dossier des comptes, sessions, recherches enregistrées et fichiers de sauvegarde. Montez-le sur un volume durable pour les déploiements Node.js. |
 | `SEARCH_ENDPOINT` | *(valeur par défaut)* | URL du service de recherche externe relaisé par `POST /api/search`. |
 | `ADMIN_BOOTSTRAP_TOKEN` | *(vide)* | Secret requis pour créer le tout premier administrateur. Gardez-le dans un gestionnaire de secrets; ne le publiez pas dans l'interface. |
 | `AUTH_USER` / `AUTH_PASS` | *(vide)* | Si définis, authentification HTTP Basic supplémentaire sur tout le site (y compris les pages). |
@@ -66,7 +67,7 @@ Le serveur Node et le Worker Cloudflare fournissent les routes d'administration 
 
 Pour un déploiement statique Cloudflare Workers avec Wrangler, `.assetsignore` limite les ressources publiées aux fichiers de l'interface et exclut notamment `node_modules/`, qui contient des fichiers trop volumineux pour les assets Workers.
 
-Le fichier `wrangler.jsonc` configure le Worker Cloudflare `kikzxw-osint`, son Durable Object `AuthStore` (comptes, sessions et recherches enregistrées) et les assets du site. Le premier déploiement applique la migration SQLite automatiquement. Déployez avec `npx wrangler deploy`. Les comptes Node.js locaux et ceux de Cloudflare utilisent des stockages distincts. Le nom du Worker détermine son identifiant Cloudflare public; adaptez-le si tu utilises déjà un autre nom de Worker en production.
+Le fichier `wrangler.jsonc` configure le Worker Cloudflare `redtrace`, son Durable Object `AuthStore` (comptes, sessions et recherches enregistrées) et les assets du site. Le premier déploiement applique la migration SQLite automatiquement. Déployez avec `npx wrangler deploy`. Les comptes Node.js locaux et ceux de Cloudflare utilisent des stockages distincts. Le nom `redtrace` conserve l'identité du Worker et son stockage Durable Object existants.
 
 ## Endpoints
 

@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, "..", "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const SAVED_FILE = path.join(DATA_DIR, "saved.json");
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SAVED_PER_USER = 50;
 const USERNAME_PATTERN = /^[a-z0-9._-]{3,24}$/;
@@ -12,33 +13,91 @@ const MIN_PASSWORD_LENGTH = 8;
 const ROLES = new Set(["admin", "membre"]);
 
 function loadJson(file, fallback) {
-  let content;
+  const readArray = (target) => {
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(target, "utf8"));
+    } catch (error) {
+      if (error.code === "ENOENT") throw error;
+      throw Object.assign(new Error(`Le fichier de données ${target} est invalide.`, { cause: error }), { code: "INVALID_DATA" });
+    }
+    if (!Array.isArray(data)) throw Object.assign(new Error(`Le fichier de données ${target} doit contenir un tableau.`), { code: "INVALID_DATA" });
+    return data;
+  };
+
+  let recovered;
+  let corrupted;
   try {
-    content = fs.readFileSync(file, "utf8");
+    recovered = readArray(file);
+    return recovered;
   } catch (error) {
-    if (error.code === "ENOENT") return fallback;
-    throw error;
+    if (error.code !== "ENOENT" && error.code !== "INVALID_DATA") throw error;
+    if (error.code === "INVALID_DATA") corrupted = `${file}.corrupt-${Date.now()}`;
   }
-  let data;
+
+  const backup = `${file}.bak`;
   try {
-    data = JSON.parse(content);
+    recovered = readArray(backup);
   } catch (error) {
-    throw new Error(`Le fichier de données ${file} est invalide; il a été conservé.`, { cause: error });
+    if (error.code === "ENOENT" && !corrupted) return fallback;
+    throw new Error(`Le fichier ${file} ${corrupted ? "est invalide" : "est absent"} et sa sauvegarde ${backup} est indisponible.`, { cause: error });
   }
-  if (!Array.isArray(data)) throw new Error(`Le fichier de données ${file} doit contenir un tableau.`);
-  return data;
+
+  if (corrupted) {
+    fs.renameSync(file, corrupted);
+    fs.chmodSync(corrupted, 0o600);
+  }
+  const restore = `${file}.restore.tmp`;
+  fs.copyFileSync(backup, restore);
+  fs.chmodSync(restore, 0o600);
+  fs.renameSync(restore, file);
+  console.warn(`Données restaurées depuis ${backup}${corrupted ? `; le fichier invalide est conservé sous ${corrupted}` : ""}.`);
+  return recovered;
 }
 
 function persistJson(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const directory = path.dirname(file);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const contents = `${JSON.stringify(data, null, 2)}\n`;
+  const writeDurableFile = (target) => {
+    const descriptor = fs.openSync(target, "w", 0o600);
+    try {
+      fs.fchmodSync(descriptor, 0o600);
+      fs.writeFileSync(descriptor, contents, "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  };
   const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`);
+  writeDurableFile(tmp);
+  if (fs.existsSync(file)) {
+    const backupTmp = `${file}.bak.tmp`;
+    fs.copyFileSync(file, backupTmp);
+    fs.chmodSync(backupTmp, 0o600);
+    const backupDescriptor = fs.openSync(backupTmp, "r");
+    try { fs.fsyncSync(backupDescriptor); } finally { fs.closeSync(backupDescriptor); }
+    fs.renameSync(backupTmp, `${file}.bak`);
+  }
   fs.renameSync(tmp, file);
+  try {
+    const directoryDescriptor = fs.openSync(directory, "r");
+    try { fs.fsyncSync(directoryDescriptor); } finally { fs.closeSync(directoryDescriptor); }
+  } catch {
+    // Directory fsync is not available on every supported platform.
+  }
 }
 
 let users = loadJson(USERS_FILE, []);
 let savedSearches = loadJson(SAVED_FILE, []);
-const sessions = new Map();
+const sessions = new Map(loadJson(SESSIONS_FILE, [])
+  .filter((session) => session && /^[a-f0-9]{64}$/.test(session.tokenHash)
+    && typeof session.userId === "string" && Number.isFinite(session.expiresAt))
+  .map((session) => [session.tokenHash, { userId: session.userId, expiresAt: session.expiresAt }]));
+
+function persistSessions() {
+  persistJson(SESSIONS_FILE, [...sessions].map(([tokenHash, session]) => ({ tokenHash, ...session })));
+}
 
 function authError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -150,6 +209,7 @@ function deleteUser(actor, targetId) {
   for (const [token, session] of sessions) {
     if (session.userId === targetId) sessions.delete(token);
   }
+  persistSessions();
   persistJson(USERS_FILE, users);
   persistJson(SAVED_FILE, savedSearches);
   return publicUser(target);
@@ -176,36 +236,52 @@ function stats() {
 
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  sessions.set(tokenHash, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
+  persistSessions();
   return token;
 }
 
 function getSession(token) {
   if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) return null;
-  const session = sessions.get(token);
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const session = sessions.get(tokenHash);
   if (!session) return null;
   if (session.expiresAt <= Date.now()) {
-    sessions.delete(token);
+    sessions.delete(tokenHash);
+    persistSessions();
     return null;
   }
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
+  const now = Date.now();
+  if (session.expiresAt - now < SESSION_TTL_MS - 60 * 60 * 1000) {
+    session.expiresAt = now + SESSION_TTL_MS;
+    persistSessions();
+  }
   const user = findUserById(session.userId);
   if (!user) {
-    sessions.delete(token);
+    sessions.delete(tokenHash);
+    persistSessions();
     return null;
   }
   return { token, user };
 }
 
 function revokeSession(token) {
-  if (token) sessions.delete(token);
+  if (!token) return;
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  if (sessions.delete(tokenHash)) persistSessions();
 }
 
 function purgeExpiredSessions() {
   const now = Date.now();
+  let changed = false;
   for (const [token, session] of sessions) {
-    if (session.expiresAt <= now) sessions.delete(token);
+    if (session.expiresAt <= now) {
+      sessions.delete(token);
+      changed = true;
+    }
   }
+  if (changed) persistSessions();
 }
 
 function listSaved(userId) {

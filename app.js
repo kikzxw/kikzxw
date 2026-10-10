@@ -1458,6 +1458,113 @@ function showToast(message, kind = "info") {
 }
 
 /* ---------- Session / authentification ---------- */
+function renderSavedSearches() {
+  const list = document.querySelector("#saved-list");
+  const count = document.querySelector("#saved-count");
+  list.replaceChildren();
+  count.textContent = `${String(savedSearches.length).padStart(2, "0")} ENREGISTRÉE${savedSearches.length === 1 ? "" : "S"}`;
+  if (!currentUser) {
+    list.append(element("div", "saved-empty", "Connectez-vous pour conserver vos recherches sur votre compte."));
+    return;
+  }
+  if (!savedSearches.length) {
+    list.append(element("div", "saved-empty", "Aucune recherche enregistrée. Utilisez ☆ Enregistrer après avoir renseigné des critères."));
+    return;
+  }
+
+  for (const item of savedSearches) {
+    const row = element("article", "saved-item");
+    const label = element("strong", "saved-item-label", item.label);
+    const date = new Date(item.createdAt);
+    const meta = element("span", "saved-item-meta", Number.isNaN(date.getTime())
+      ? "Critères sauvegardés"
+      : `Enregistrée le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(date)}`);
+    const actions = element("div", "saved-item-actions");
+    const open = element("button", "text-button", "Ouvrir");
+    open.type = "button";
+    open.addEventListener("click", () => restoreSavedSearch(item));
+    const remove = element("button", "text-button saved-remove", "Supprimer");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        const response = await apiRequest(`/api/saved/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error(response.payload?.error || "Suppression impossible.");
+        savedSearches = savedSearches.filter((saved) => saved.id !== item.id);
+        renderSavedSearches();
+        showToast("Recherche supprimée des éléments enregistrés.");
+      } catch (error) {
+        remove.disabled = false;
+        showToast(error.message || "Suppression impossible.", "error");
+      }
+    });
+    actions.append(open, remove);
+    row.append(label, meta, actions);
+    list.append(row);
+  }
+}
+
+async function loadSavedSearches() {
+  if (!currentUser) {
+    savedSearches = [];
+    renderSavedSearches();
+    return;
+  }
+  try {
+    const response = await apiRequest("/api/saved");
+    if (!response.ok) throw new Error(response.payload?.error || "Chargement des recherches enregistrées impossible.");
+    savedSearches = Array.isArray(response.payload?.saved) ? response.payload.saved : [];
+    renderSavedSearches();
+  } catch (error) {
+    showToast(error.message || "Chargement des recherches enregistrées impossible.", "error");
+  }
+}
+
+function restoreSavedSearch(item) {
+  const form = document.querySelector("#search-form");
+  form.reset();
+  document.querySelector("#search-field-filter").value = "";
+  for (const [key, value] of Object.entries(item.payload || {})) {
+    const field = form.elements.namedItem(key);
+    if (!field || !("value" in field)) continue;
+    if (field.type === "checkbox") field.checked = Boolean(value);
+    else field.value = String(value);
+  }
+  updateSearchControls();
+  showView("search");
+  showToast(`Critères « ${item.label} » restaurés. Lancez la recherche pour obtenir les résultats.`);
+}
+
+async function saveCurrentSearch() {
+  if (!currentUser) {
+    showToast("Connectez-vous pour enregistrer une recherche dans votre compte.", "error");
+    return;
+  }
+  const { payload, criteria } = collectSearchPayload();
+  if (!criteria) {
+    showToast("Renseignez au moins un critère avant d'enregistrer.", "error");
+    return;
+  }
+  const label = window.prompt("Nom de cette recherche enregistrée :", searchQueryTitle(payload));
+  if (label === null) return;
+  if (!label.trim()) {
+    showToast("Le nom de la recherche ne peut pas être vide.", "error");
+    return;
+  }
+  const button = document.querySelector("#save-search");
+  button.disabled = true;
+  try {
+    const response = await apiRequest("/api/saved", { method: "POST", body: { label, payload } });
+    if (!response.ok) throw new Error(response.payload?.error || "Enregistrement impossible.");
+    await loadSavedSearches();
+    showToast("Recherche enregistrée sur votre compte.");
+  } catch (error) {
+    showToast(error.message || "Enregistrement impossible.", "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function apiRequest(path, { method = "GET", body } = {}) {
   const response = await fetch(path, {
     method,
@@ -1490,11 +1597,14 @@ function applySession(user) {
     document.querySelector("#user-avatar").textContent = user.username.slice(0, 2).toUpperCase();
     overlay.classList.add("hidden");
     navAdmin.classList.toggle("hidden", user.role !== "admin");
+    loadSavedSearches();
   } else {
     chip.classList.add("hidden");
     document.querySelector("#logout-button").classList.add("hidden");
     overlay.classList.remove("hidden");
     navAdmin.classList.add("hidden");
+    savedSearches = [];
+    renderSavedSearches();
     if (document.querySelector("#view-admin").classList.contains("active")) showView("overview");
   }
 }
@@ -1512,6 +1622,7 @@ function setAuthMode(mode) {
   document.querySelector("#auth-form").setAttribute("aria-labelledby", mode === "login" ? loginTab.id : registerTab.id);
   document.querySelector("#auth-submit .button-label").textContent = mode === "login" ? "Se connecter" : "Créer le compte";
   document.querySelector("#auth-password").autocomplete = mode === "login" ? "current-password" : "new-password";
+  document.querySelector("#auth-bootstrap-field").classList.toggle("hidden", mode !== "register");
   document.querySelector("#auth-error").classList.add("hidden");
 }
 
@@ -1650,9 +1761,14 @@ document.querySelector("#auth-form").addEventListener("submit", async (event) =>
   errorBox.classList.add("hidden");
   label.textContent = authMode === "login" ? "Connexion…" : "Création…";
   try {
+    const authBody = { username, password };
+    if (authMode === "register") {
+      const bootstrapToken = document.querySelector("#auth-bootstrap-token").value.trim();
+      if (bootstrapToken) authBody.bootstrapToken = bootstrapToken;
+    }
     const response = await apiRequest(`/api/auth/${authMode === "login" ? "login" : "register"}`, {
       method: "POST",
-      body: { username, password },
+      body: authBody,
     });
     if (!response.ok || !response.payload?.user) {
       throw new Error(response.payload?.error || "Le serveur a refusé la demande d'authentification.");
@@ -1685,6 +1801,7 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
   }
 });
 document.querySelector("#admin-refresh").addEventListener("click", loadAdminPanel);
+document.querySelector("#save-search").addEventListener("click", saveCurrentSearch);
 document.querySelector("#result-filter").addEventListener("input", applyResultFilter);
 refreshSession();
 

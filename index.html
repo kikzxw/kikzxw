@@ -200,10 +200,11 @@
         <form id="auth-form" class="auth-form" role="tabpanel" aria-labelledby="auth-tab-login" tabindex="0">
           <label class="field"><span>NOM D'UTILISATEUR</span><input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Ex. analyste" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9._\-]{3,24}"></label>
           <label class="field"><span>MOT DE PASSE</span><span class="auth-password-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="8 caractères minimum" required minlength="8" maxlength="200"><button class="auth-reveal" id="auth-reveal" type="button" aria-label="Afficher le mot de passe">○</button></span></label>
+          <label class="field hidden" id="auth-bootstrap-field"><span>JETON ADMINISTRATEUR INITIAL</span><input id="auth-bootstrap-token" name="bootstrapToken" type="password" autocomplete="off" placeholder="Fourni par l’administrateur" maxlength="512"></label>
           <div id="auth-error" class="result-error hidden" role="alert"></div>
           <button class="button button-primary auth-submit" type="submit" id="auth-submit"><span class="button-label">Se connecter</span><span>→</span></button>
         </form>
-        <p class="auth-note" id="auth-note">Le premier administrateur est créé par l'exploitant avec un jeton secret. Les inscriptions suivantes créent des comptes membres.</p>
+        <p class="auth-note" id="auth-note">Pour créer le premier compte, saisissez le jeton initial fourni par l’administrateur. Les inscriptions suivantes créent des comptes membres.</p>
       </div>
     </div>
   </body>

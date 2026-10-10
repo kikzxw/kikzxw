@@ -1259,6 +1259,18 @@ body { min-height: 100svh; }
 .page-intro { margin-bottom: 24px; }
 .page-intro h1 { margin-bottom: 8px; }
 .search-panel, .result-panel, .saved-panel, .history-panel, .admin-panel { margin-bottom: 18px; }
+.saved-list { display: grid; gap: 10px; }
+.saved-empty { padding: 15px 16px; color: var(--muted); font-size: 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.saved-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff03; }
+.saved-item-label { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.saved-item-meta { color: var(--muted); font-size: 11px; }
+.saved-item-actions { display: flex; align-items: center; gap: 12px; }
+.saved-remove { color: var(--danger, #ef7373); }
+@media (max-width: 620px) {
+  .saved-item { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .saved-item-meta { grid-column: 1; grid-row: 2; }
+  .saved-item-actions { grid-column: 2; grid-row: 1 / span 2; }
+}
 .field input, .field select { min-height: 44px; }
 .field > span { font-size: 9px; }
 .field-group { border-radius: 10px; }
