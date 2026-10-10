@@ -5,6 +5,10 @@ const net = require("node:net");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const searchResponseModule = import("./search-response.mjs");
+const store = require("./store");
+
+const SESSION_COOKIE = "rt_session";
+
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -72,27 +76,29 @@ function isAuthorized(request) {
 }
 
 function challengeUnauthorized(response) {
-  sendJson(response, 401, { error: "Authentification requise." }, { "WWW-Authenticate": 'Basic realm="RedTrace", charset="UTF-8"' });
+  sendJson(response, 401, { error: "Authentification requise." }, { "WWW-Authenticate": 'Basic realm="KIKZXW", charset="UTF-8"' });
 }
 
 const rateBuckets = new Map();
 
-function isRateLimited(request, limitPerMinute) {
+function isRateLimited(request, limitPerMinute, scope = "default") {
   const now = Date.now();
   const ip = clientIp(request);
-  let bucket = rateBuckets.get(ip);
+  const key = `${scope}:${ip}`;
+  let bucket = rateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
     if (rateBuckets.size >= 10_000) {
-      for (const [key, entry] of rateBuckets) {
-        if (entry.resetAt <= now) rateBuckets.delete(key);
+      for (const [entryKey, entry] of rateBuckets) {
+        if (entry.resetAt <= now) rateBuckets.delete(entryKey);
       }
     }
     bucket = { count: 0, resetAt: now + 60_000 };
-    rateBuckets.set(ip, bucket);
+    rateBuckets.set(key, bucket);
   }
   bucket.count += 1;
   return bucket.count > limitPerMinute;
 }
+
 
 function readJsonBody(request, maxBytes = MAX_REQUEST_SIZE) {
   return new Promise((resolve, reject) => {
@@ -181,6 +187,12 @@ function buildSearchQuery(body) {
 }
 
 async function handleSearch(request, response) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Connexion requise pour effectuer une recherche." });
+    return;
+  }
+  const userId = session.user.id;
   try {
     const body = await readJsonBody(request, MAX_SEARCH_SIZE);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -196,6 +208,9 @@ async function handleSearch(request, response) {
     });
     const { parseSearchResponse } = await searchResponseModule;
     const payload = await parseSearchResponse(upstream);
+    if (upstream.status >= 200 && upstream.status < 300) {
+      store.incrementSearchCount(userId);
+    }
     sendJson(response, upstream.status, payload);
   } catch (error) {
     if (error.name === "TimeoutError" || error.name === "AbortError" || error.code === "UND_ERR_CONNECT_TIMEOUT") {
@@ -210,6 +225,179 @@ async function handleSearch(request, response) {
       error: error.message || "Impossible de joindre le service de recherche.",
     });
   }
+}
+
+function readSession(request) {
+  const cookieHeader = request.headers.cookie || "";
+  const match = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([a-f0-9]{64})(?:;|$)`).exec(cookieHeader);
+  if (!match) return null;
+  return store.getSession(match[1]);
+}
+
+function sessionCookie(token) {
+  const parts = [`${SESSION_COOKIE}=${token}`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=604800"];
+  if (useTls) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearedSessionCookie() {
+  const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+  if (useTls) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function sendAuthError(response, error) {
+  sendJson(response, error.status || 400, { error: error.message || "Requête invalide." });
+}
+
+async function readAuthBody(request) {
+  const body = await readJsonBody(request, 4 * 1024);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw Object.assign(new Error("Le corps de la requête doit être un objet JSON valide."), { status: 400 });
+  }
+  return body;
+}
+
+async function handleRegister(request, response) {
+  if (isRateLimited(request, 10, "register")) {
+    sendJson(response, 429, { error: "Trop de tentatives de création de compte. Réessayez dans une minute." });
+    return;
+  }
+  let body;
+  try {
+    body = await readAuthBody(request);
+    const user = store.createUser(body.username, body.password);
+    const token = store.createSession(user.id);
+    response.setHeader("Set-Cookie", sessionCookie(token));
+    sendJson(response, 201, { user: store.publicUser(user), firstUser: user.role === "admin" });
+  } catch (error) {
+    sendAuthError(response, error);
+  }
+}
+
+async function handleLogin(request, response) {
+  if (isRateLimited(request, 15, "login")) {
+    sendJson(response, 429, { error: "Trop de tentatives de connexion. Réessayez dans une minute." });
+    return;
+  }
+  let body;
+  try {
+    body = await readAuthBody(request);
+    const user = store.authenticate(body.username, body.password);
+    const token = store.createSession(user.id);
+    response.setHeader("Set-Cookie", sessionCookie(token));
+    sendJson(response, 200, { user: store.publicUser(user) });
+  } catch (error) {
+    sendAuthError(response, error);
+  }
+}
+
+function handleLogout(request, response) {
+  const session = readSession(request);
+  if (session) store.revokeSession(session.token);
+  response.setHeader("Set-Cookie", clearedSessionCookie());
+  sendJson(response, 200, { ok: true });
+}
+
+function handleMe(request, response) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Session inactive ou expirée." });
+    return;
+  }
+  sendJson(response, 200, { user: store.publicUser(session.user) });
+}
+
+async function handleAdminUsers(request, response, pathname) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Authentification requise." });
+    return;
+  }
+  if (session.user.role !== "admin") {
+    sendJson(response, 403, { error: "Réservé aux administrateurs." });
+    return;
+  }
+
+  if (request.method === "GET") {
+    sendJson(response, 200, { users: store.listUsers() });
+    return;
+  }
+
+  const targetMatch = /^\/api\/admin\/users\/([0-9a-f-]{36})$/.exec(pathname);
+  if (!targetMatch) {
+    sendJson(response, 404, { error: "Endpoint inconnu." });
+    return;
+  }
+  const targetId = targetMatch[1];
+
+  try {
+    if (request.method === "PATCH") {
+      const body = await readAuthBody(request);
+      const user = store.setRole(session.user, targetId, body.role);
+      sendJson(response, 200, { user });
+      return;
+    }
+    if (request.method === "DELETE") {
+      const user = store.deleteUser(session.user, targetId);
+      sendJson(response, 200, { user });
+      return;
+    }
+    sendJson(response, 405, { error: "Méthode non autorisée." });
+  } catch (error) {
+    sendAuthError(response, error);
+  }
+}
+
+function handleAdminStats(request, response) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Authentification requise." });
+    return;
+  }
+  if (session.user.role !== "admin") {
+    sendJson(response, 403, { error: "Réservé aux administrateurs." });
+    return;
+  }
+  sendJson(response, 200, store.stats());
+}
+
+async function handleSaved(request, response, pathname) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Authentification requise." });
+    return;
+  }
+
+  if (request.method === "GET") {
+    sendJson(response, 200, { saved: store.listSaved(session.user.id) });
+    return;
+  }
+  if (request.method === "POST") {
+    if (isRateLimited(request, 30, "saved")) {
+      sendJson(response, 429, { error: "Trop de requêtes. Réessayez dans une minute." });
+      return;
+    }
+    try {
+      const body = await readAuthBody(request);
+      const entry = store.addSaved(session.user.id, body.label, body.payload);
+      sendJson(response, 201, { saved: entry });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+  const deleteMatch = /^\/api\/saved\/([0-9a-f-]{36})$/.exec(pathname);
+  if (request.method === "DELETE" && deleteMatch) {
+    try {
+      store.removeSaved(session.user.id, deleteMatch[1]);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+  sendJson(response, 405, { error: "Méthode non autorisée." });
 }
 
 const STATIC_FILES = new Map([
@@ -258,15 +446,38 @@ function handleRequest(request, response) {
     challengeUnauthorized(response);
     return;
   }
-  if (request.method === "POST" && request.url === "/api/search") {
-    if (isRateLimited(request, RATE_LIMIT_SEARCH)) {
+  let pathname = "";
+  try {
+    pathname = new URL(request.url, `http://${request.headers.host || "localhost"}`).pathname;
+  } catch {
+    sendJson(response, 400, { error: "Requête invalide." });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/api/auth/register") {
+    handleRegister(request, response);
+  } else if (request.method === "POST" && pathname === "/api/auth/login") {
+    handleLogin(request, response);
+  } else if (request.method === "POST" && pathname === "/api/auth/logout") {
+    handleLogout(request, response);
+  } else if (request.method === "GET" && pathname === "/api/auth/me") {
+    handleMe(request, response);
+  } else if (pathname === "/api/admin/stats") {
+    if (request.method !== "GET") sendJson(response, 405, { error: "Méthode non autorisée." });
+    else handleAdminStats(request, response);
+  } else if (pathname === "/api/admin/users" || pathname.startsWith("/api/admin/users/")) {
+    handleAdminUsers(request, response, pathname);
+  } else if (pathname === "/api/saved" || pathname.startsWith("/api/saved/")) {
+    handleSaved(request, response, pathname);
+  } else if (request.method === "POST" && pathname === "/api/search") {
+    if (isRateLimited(request, RATE_LIMIT_SEARCH, "search")) {
       sendJson(response, 429, { error: "Trop de requêtes. Réessayez dans une minute." });
       return;
     }
     handleSearch(request, response);
   } else if (request.method === "GET") {
     serveStatic(request, response);
-  } else if (request.url.startsWith("/api/")) {
+  } else if (pathname.startsWith("/api/")) {
     sendJson(response, 404, { error: "Endpoint inconnu." });
   } else {
     sendJson(response, 405, { error: "Méthode non autorisée." });
@@ -295,7 +506,7 @@ if (useTls) {
 
 publicServer.listen(PORT, HOST, () => {
   const scheme = useTls ? "https" : "http";
-  console.log(`RedTrace est disponible sur ${scheme}://${HOST}:${PORT}`);
+  console.log(`KIKZXW est disponible sur ${scheme}://${HOST}:${PORT}`);
   if (!AUTH_USER && !AUTH_PASS) {
     console.log("Attention : aucune authentification n'est configurée (variables AUTH_USER / AUTH_PASS).");
   }

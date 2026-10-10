@@ -1,13 +1,19 @@
-const views = ["overview", "search", "history"];
+const views = ["overview", "search", "history", "admin"];
 const viewTitles = {
   overview: "Tableau de bord",
   search: "Recherche",
   history: "Historique",
+  admin: "Administration",
 };
 const activity = [];
 let activeSearch = null;
+let currentUser = null;
+let currentResults = null;
+let savedSearches = [];
+let authMode = "login";
 
 function showView(name) {
+  if (name === "admin" && currentUser?.role !== "admin") name = "overview";
   for (const view of views) {
     document.querySelector(`#view-${view}`).classList.toggle("active", view === name);
   }
@@ -19,6 +25,7 @@ function showView(name) {
     else button.removeAttribute("aria-current");
   });
   if (name === "history") renderActivity();
+  if (name === "admin") loadAdminPanel();
 }
 
 function element(tag, className, text) {
@@ -29,11 +36,34 @@ function element(tag, className, text) {
 }
 
 function formatValue(value) {
-  if (Array.isArray(value)) return value.length ? value.map(formatValue).join("\n") : "Aucun enregistrement";
-  if (value && typeof value === "object") {
-    return Object.entries(value).map(([key, item]) => `${key}: ${formatValue(item)}`).join(" · ");
+  if (value === undefined || value === null) return "";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  if (typeof value === "boolean") return value ? "Oui" : "Non";
+  if (Array.isArray(value)) {
+    const parts = value.map(formatValue).filter(Boolean);
+    return parts.length ? parts.join(", ") : "";
   }
-  return String(value);
+  if (typeof value === "object") {
+    const parts = Object.entries(value)
+      .map(([key, item]) => {
+        const formatted = formatValue(item);
+        return formatted ? `${key} : ${formatted}` : "";
+      })
+      .filter(Boolean);
+    return parts.length ? parts.join(" · ") : "";
+  }
+  const text = String(value).trim();
+  if (!text || text === "null" || text === "undefined" || text === "NaN") return "";
+  if ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"))) {
+    try {
+      const parsed = JSON.parse(text);
+      const formatted = formatValue(parsed);
+      if (formatted) return formatted;
+    } catch {
+      /* ce n'est pas du JSON : on affiche le texte brut */
+    }
+  }
+  return text;
 }
 
 const searchFieldGroups = [
@@ -364,26 +394,53 @@ function sortSearchEntries(record) {
   return Object.entries(record).sort(([keyA], [keyB]) => rank(keyA) - rank(keyB));
 }
 
+const META_RESULT_KEYS = new Set([
+  "page", "per_page", "flexible", "status", "message", "timestamp", "success",
+  "total", "total_raw", "total_is_capped", "total_pending", "pages", "query",
+  "took_ms", "count_took_ms", "cached", "maintenance", "results", "error", "detail",
+]);
+
+function humanizeLabel(key) {
+  const known = searchLabels[key];
+  if (known) return known;
+  return String(key)
+    .replace(/^_+/, "")
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function hasDisplayValue(value) {
-  return value !== undefined
-    && value !== null
-    && value !== ""
-    && !(Array.isArray(value) && value.length === 0)
-    && !(typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0);
+  if (value === undefined || value === null) return false;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "boolean") return true;
+  if (typeof value === "string") {
+    const text = value.trim();
+    return Boolean(text) && text !== "null" && text !== "undefined" && text !== "NaN";
+  }
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return false;
 }
 
 function searchResultCard(record, index) {
-  const fields = sortSearchEntries(record || {}).filter(([key, value]) =>
-    searchFieldOrder.includes(key)
-    && !["page", "per_page", "flexible"].includes(key)
-    && hasDisplayValue(value));
+  const source = isPlainObject(record) ? record : { valeur: record };
+  const fields = sortSearchEntries(source)
+    .filter(([key, value]) => {
+      if (key.startsWith("_")) return false;
+      if (META_RESULT_KEYS.has(key)) return false;
+      return hasDisplayValue(value);
+    });
   const card = element("article", "search-result-card");
   card.style.setProperty("--i", index);
   const heading = element("div", "search-result-card-heading");
-  const fieldValue = (key) => fields.find(([field]) => field === key)?.[1];
+  const fieldValue = (key) => {
+    const entry = fields.find(([field]) => field === key);
+    return entry ? formatValue(entry[1]) : "";
+  };
   const displayName = fieldValue("nom_affichage");
-  const personalNameFields = ["prenom", "nom_famille"].filter((key) =>
-    typeof fieldValue(key) === "string" && fieldValue(key).trim());
+  const personalNameFields = ["prenom", "nom_famille"].filter((key) => fieldValue(key));
   const personalName = personalNameFields.map(fieldValue).join(" ");
   const username = fieldValue("nom_utilisateur");
   const email = fieldValue("email");
@@ -408,10 +465,12 @@ function searchResultCard(record, index) {
   const extraFields = additionalFields.slice(8);
   const renderFields = (container, entries) => {
     for (const [key, value] of entries) {
+      const formatted = formatValue(value);
+      if (!formatted) continue;
       const row = element("div", "search-result-field");
       row.append(
-        element("span", "search-result-label", searchLabel(key)),
-        element("span", "search-result-value", formatValue(value)),
+        element("span", "search-result-label", humanizeLabel(key)),
+        element("span", "search-result-value", formatted),
       );
       container.append(row);
     }
@@ -433,6 +492,117 @@ function searchResultCard(record, index) {
     card.append(element("p", "search-result-empty", "Aucun champ exploitable dans ce résultat."));
   }
   return card;
+}
+
+function coordinateFrom(value) {
+  if (typeof value === "string" && value.trim()) value = Number(value.trim().replace(",", "."));
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function extractResultLocation(record, index) {
+  const sources = [record, ...Object.values(record).filter(isPlainObject)];
+  let latitude = null;
+  let longitude = null;
+  let label = "";
+
+  for (const source of sources) {
+    for (const [rawKey, value] of Object.entries(source)) {
+      const key = rawKey.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+      const number = coordinateFrom(value);
+      if (number !== null && /^(lat|latitude|geolatitude|coordonneeslatitude)$/.test(key)) latitude = number;
+      if (number !== null && /^(lon|lng|longitude|geolongitude|coordonneeslongitude)$/.test(key)) longitude = number;
+    }
+  }
+
+  const labelKeys = ["ville", "localite", "adresse", "lieu", "region", "departement", "pays", "code_postal"];
+  for (const key of labelKeys) {
+    const value = record[key] ?? sources.slice(1).map((source) => source[key]).find(hasDisplayValue);
+    if (hasDisplayValue(value)) {
+      label = formatValue(value);
+      break;
+    }
+  }
+  if (latitude === null || longitude === null || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+    latitude = null;
+    longitude = null;
+  }
+  if (!label && latitude !== null && longitude !== null) label = `Lieu ${index + 1}`;
+  return label || latitude !== null ? { label: label || `Lieu ${index + 1}`, latitude, longitude, index } : null;
+}
+
+function renderResultMap(results) {
+  const slot = document.querySelector("#search-result-map");
+  slot.replaceChildren();
+  const locations = results
+    .map((record, index) => extractResultLocation(isPlainObject(record) ? record : {}, index))
+    .filter(Boolean);
+  if (!locations.length) return;
+
+  const points = locations.filter(({ latitude, longitude }) => latitude !== null && longitude !== null);
+  const map = element("section", "results-map");
+  const heading = element("div", "map-heading");
+  const headingCopy = element("div");
+  headingCopy.append(element("span", "section-kicker", "RÉPARTITION GÉOGRAPHIQUE"), element("h3", "", "Carte des lieux"));
+  heading.append(headingCopy, element("span", "map-count", `${locations.length} LIEU${locations.length === 1 ? "" : "X"}`));
+  map.append(heading);
+
+  if (points.length) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 900 360");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `${points.length} lieu${points.length === 1 ? "" : "x"} positionné${points.length === 1 ? "" : "s"} à partir des coordonnées des résultats`);
+    const makeSvg = (tag, attributes, parent = svg) => {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+      parent.append(node);
+      return node;
+    };
+    const left = 44;
+    const right = 856;
+    const top = 34;
+    const bottom = 306;
+    for (let index = 0; index <= 8; index += 1) {
+      const x = left + (right - left) * index / 8;
+      makeSvg("line", { x1: x, x2: x, y1: top, y2: bottom, class: "map-grid-line" });
+    }
+    for (let index = 0; index <= 4; index += 1) {
+      const y = top + (bottom - top) * index / 4;
+      makeSvg("line", { x1: left, x2: right, y1: y, y2: y, class: "map-grid-line" });
+    }
+    makeSvg("rect", { x: left, y: top, width: right - left, height: bottom - top, rx: 12, class: "map-frame" });
+
+    const minLongitude = Math.min(...points.map(({ longitude }) => longitude));
+    const maxLongitude = Math.max(...points.map(({ longitude }) => longitude));
+    const minLatitude = Math.min(...points.map(({ latitude }) => latitude));
+    const maxLatitude = Math.max(...points.map(({ latitude }) => latitude));
+    for (const point of points) {
+      const x = left + (right - left) * (maxLongitude === minLongitude ? .5 : (point.longitude - minLongitude) / (maxLongitude - minLongitude));
+      const y = top + (bottom - top) * (maxLatitude === minLatitude ? .5 : (maxLatitude - point.latitude) / (maxLatitude - minLatitude));
+      const marker = makeSvg("g", { class: "map-marker" });
+      const title = makeSvg("title", {}, marker);
+      title.textContent = `${point.label} · ${point.latitude}, ${point.longitude}`;
+      makeSvg("circle", { cx: x, cy: y, r: 12, class: "map-marker-halo" }, marker);
+      makeSvg("circle", { cx: x, cy: y, r: 5, class: "map-marker-dot" }, marker);
+      const markerNumber = makeSvg("text", { x, y: y - 19, "text-anchor": "middle", class: "map-marker-number" }, marker);
+      markerNumber.textContent = String(point.index + 1);
+    }
+    map.append(svg, element("p", "map-caption", "Position calculée à partir des coordonnées fournies dans les résultats · aucun fond cartographique externe."));
+  } else {
+    map.append(element("div", "map-unavailable", "Les résultats contiennent des lieux, mais aucune coordonnée géographique exploitable pour les positionner sur la carte."));
+  }
+
+  const placeList = element("ul", "map-place-list");
+  for (const [index, location] of locations.slice(0, 8).entries()) {
+    const item = element("li", "map-place");
+    item.append(element("span", "map-place-index", String(index + 1).padStart(2, "0")), element("span", "map-place-name", location.label));
+    if (location.latitude !== null && location.longitude !== null) {
+      item.append(element("span", "map-place-coordinates", `${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}`));
+    }
+    placeList.append(item);
+  }
+  if (locations.length > 8) placeList.append(element("li", "map-place-overflow", `+ ${locations.length - 8} autres lieux dans les résultats`));
+  map.append(placeList);
+  slot.append(map);
 }
 
 function renderSearchPager(page, pages) {
@@ -492,29 +662,52 @@ function normalizeSearchResponse(payload, statusCode, search) {
   }
 
   const data = isPlainObject(payload.data) ? payload.data : {};
-  const rawResults = Array.isArray(data.results)
-    ? data.results
-    : Array.isArray(payload.results)
-      ? payload.results
-      : null;
+  const rawResults = Array.isArray(payload.results)
+    ? payload.results
+    : Array.isArray(data.results)
+      ? data.results
+      : Array.isArray(payload.data)
+        ? payload.data
+        : null;
   if (!rawResults) {
     return { error: "Le service de recherche a renvoyé un JSON valide, mais sans liste de résultats exploitable." };
   }
 
-  const results = rawResults.filter(isPlainObject);
-  const meta = isPlainObject(payload.meta) ? payload.meta : {};
-  const pages = safeResponseNumber(meta.pages, 1) || 1;
-  const requestedPage = safeResponseNumber(meta.page ?? search.page, 1) || 1;
-  const page = Math.min(requestedPage, pages);
-  const total = safeResponseNumber(meta.total, 0) ?? rawResults.length;
+  const usable = rawResults.map((entry) => {
+    if (isPlainObject(entry)) return { entry, valid: true };
+    if (entry !== undefined && entry !== null && typeof entry !== "function") {
+      return { entry: { valeur: entry }, valid: typeof entry !== "object" };
+    }
+    return { entry: null, valid: false };
+  });
+  const results = usable.map((item) => item.entry).filter(Boolean);
+  const invalidResults = usable.filter((item) => !item.entry).length;
+
+  const meta = isPlainObject(payload.meta)
+    ? payload.meta
+    : isPlainObject(payload.data) && isPlainObject(payload.data.meta)
+      ? payload.data.meta
+      : {};
+  const readNumber = (...values) => {
+    for (const value of values) {
+      const number = safeResponseNumber(value, 0);
+      if (number !== null) return number;
+    }
+    return null;
+  };
+  const pages = readNumber(meta.pages, payload.pages) || 1;
+  const requestedPage = readNumber(meta.page, payload.page, search.page) || 1;
+  const page = Math.min(Math.max(requestedPage, 1), pages);
+  const total = readNumber(meta.total, payload.total, data.total) ?? rawResults.length;
+  const metaQuery = isPlainObject(meta.query) ? meta.query : isPlainObject(payload.query) ? payload.query : null;
   return {
     data: { results },
-    invalidResults: rawResults.length - results.length,
+    invalidResults,
     meta: {
       page,
       pages,
-      total,
-      query: isPlainObject(meta.query) ? meta.query : search,
+      total: Math.max(total, results.length),
+      query: metaQuery || search,
     },
   };
 }
@@ -522,6 +715,7 @@ function normalizeSearchResponse(payload, statusCode, search) {
 function renderSearchResult(payload, statusCode = 200, search = {}) {
   const panel = document.querySelector("#search-result-panel");
   const statusBadge = document.querySelector("#search-result-status");
+  const toolbar = document.querySelector("#result-toolbar");
   const normalized = normalizeSearchResponse(payload, statusCode, search);
   const ok = !normalized.error;
   panel.classList.remove("hidden");
@@ -531,10 +725,14 @@ function renderSearchResult(payload, statusCode = 200, search = {}) {
 
   const summary = document.querySelector("#search-result-summary");
   const sections = document.querySelector("#search-result-sections");
+  const mapSlot = document.querySelector("#search-result-map");
   summary.replaceChildren();
   sections.replaceChildren();
+  mapSlot.replaceChildren();
 
   if (!ok) {
+    currentResults = null;
+    toolbar.classList.add("hidden");
     summary.append(element("div", "result-error", normalized.error));
     hideSearchPager();
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -544,6 +742,8 @@ function renderSearchResult(payload, statusCode = 200, search = {}) {
   const { data, meta, invalidResults } = normalized;
   const { results } = data;
   const { total, page, pages } = meta;
+  currentResults = { results, meta: { ...meta, query: normalized.meta.query }, invalidResults };
+  renderResultMap(results);
 
   const chips = [
     `${total} RÉSULTAT${total === 1 ? "" : "S"}`,
@@ -584,6 +784,11 @@ function renderSearchResult(payload, statusCode = 200, search = {}) {
   }
   sections.append(resultsSection);
 
+  toolbar.classList.remove("hidden");
+  const filterInput = document.querySelector("#result-filter");
+  if (filterInput.value) filterInput.value = "";
+  applyResultFilter();
+
   panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -617,6 +822,7 @@ async function runSearch(payload, button) {
   document.querySelector("#search-result-status").className = "result-status";
   document.querySelector("#search-result-status").textContent = "EN COURS";
   document.querySelector("#search-result-summary").replaceChildren(element("div", "result-note", "Recherche en cours…"));
+  document.querySelector("#search-result-map").replaceChildren();
   document.querySelector("#search-result-sections").replaceChildren();
 
   let statusCode = 502;
@@ -630,6 +836,10 @@ async function runSearch(payload, button) {
     });
     statusCode = response.status;
     data = await readJsonResponse(response, "Le service de recherche");
+    if (response.status === 401) {
+      applySession(null);
+      showToast("Session expirée : reconnectez-vous.", "error");
+    }
   } catch (error) {
     data = { error: error.message || "Impossible de joindre le serveur." };
   } finally {
@@ -811,11 +1021,91 @@ function renderActivity() {
   renderActivityList(document.querySelector("#overview-activity"), "Aucune recherche pour le moment");
 }
 
+/* ---------- Toasts ---------- */
+function showToast(message, kind = "info") {
+  let host = document.querySelector("#toast-host");
+  if (!host) {
+    host = element("div", "toast-host");
+    host.id = "toast-host";
+    document.body.append(host);
+  }
+  const toast = element("div", `toast toast-${kind}`, message);
+  host.append(toast);
+  window.setTimeout(() => {
+    toast.classList.add("toast-out");
+    window.setTimeout(() => toast.remove(), 300);
+  }, 3200);
+}
+
+/* ---------- Session / authentification ---------- */
+async function apiRequest(path, { method = "GET", body } = {}) {
+  const response = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15_000),
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  return { status: response.status, ok: response.ok, payload };
+}
+
+function applySession(user) {
+  currentUser = user;
+  const chip = document.querySelector("#user-chip");
+  const overlay = document.querySelector("#auth-overlay");
+  const navAdmin = document.querySelector("#nav-admin");
+  if (user) {
+    chip.classList.remove("hidden");
+    document.querySelector("#user-name").textContent = user.username;
+    document.querySelector("#user-role").textContent = user.role === "admin" ? "ADMINISTRATEUR" : "MEMBRE";
+    document.querySelector("#user-role").classList.toggle("admin", user.role === "admin");
+    document.querySelector("#user-avatar").textContent = user.username.slice(0, 2).toUpperCase();
+    overlay.classList.add("hidden");
+    navAdmin.classList.toggle("hidden", user.role !== "admin");
+  } else {
+    chip.classList.add("hidden");
+    overlay.classList.remove("hidden");
+    navAdmin.classList.add("hidden");
+    if (document.querySelector("#view-admin").classList.contains("active")) showView("overview");
+  }
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const loginTab = document.querySelector("#auth-tab-login");
+  const registerTab = document.querySelector("#auth-tab-register");
+  loginTab.classList.toggle("active", mode === "login");
+  registerTab.classList.toggle("active", mode === "register");
+  loginTab.setAttribute("aria-selected", mode === "login");
+  registerTab.setAttribute("aria-selected", mode === "register");
+  document.querySelector("#auth-submit .button-label").textContent = mode === "login" ? "Se connecter" : "Créer le compte";
+  document.querySelector("#auth-password").autocomplete = mode === "login" ? "current-password" : "new-password";
+  document.querySelector("#auth-error").classList.add("hidden");
+}
+
+async function refreshSession() {
+  const { ok, payload } = await apiRequest("/api/auth/me");
+  applySession(ok ? payload.user : null);
+}
+
 document.querySelectorAll("[data-view]").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.view));
 });
 document.querySelectorAll("[data-go]").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.go));
+});
+document.querySelector("#sidebar-toggle").addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const collapsed = document.body.classList.toggle("sidebar-collapsed");
+  const label = collapsed ? "Afficher la barre latérale" : "Masquer la barre latérale";
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.setAttribute("aria-label", label);
+  button.title = label;
 });
 
 

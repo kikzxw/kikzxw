@@ -1,6 +1,6 @@
-# RedTrace OSINT
+# KIKZXW — OSINT
 
-Interface web de recherche multicritère OSINT : identité, naissance, contact, localisation, comptes en ligne (Steam, FiveM, Discord, Xbox) et champs avancés (NIR, IBAN/BIC, VIN/plaque). Les requêtes sont relaisées par le serveur vers un service de recherche externe (URL par défaut codée dans le serveur, surchargeable avec la variable `SEARCH_ENDPOINT`) : le navigateur n'interroge jamais ce service directement et aucune requête n'est stockée sur le serveur.
+Interface KIKZXW de recherche multicritère OSINT : identité, naissance, contact, localisation, comptes en ligne (Steam, FiveM, Discord, Xbox) et champs avancés (NIR, IBAN/BIC, VIN/plaque). Les requêtes sont relaisées par le serveur vers un service de recherche externe (URL par défaut codée dans le serveur, surchargeable avec la variable `SEARCH_ENDPOINT`) : le navigateur n'interroge jamais ce service directement et aucune requête n'est stockée sur le serveur.
 
 ## Démarrage
 
@@ -13,6 +13,7 @@ npm start
 Ouvrez ensuite l'adresse affichée dans la console (par défaut `http://<hôte>:3000`). Aucun paquet externe n'est nécessaire.
 
 L'historique reste en mémoire dans l'onglet et disparaît lors de son rechargement. Les résultats sont affichés dans l'interface sans être sauvegardés sur le serveur.
+La carte des résultats place les points uniquement lorsque la source fournit des coordonnées ; elle n'envoie aucune adresse à un service cartographique tiers. La barre latérale peut être masquée depuis l'en-tête.
 
 ## Variables d'environnement
 

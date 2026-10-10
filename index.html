@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#070708">
-    <meta name="description" content="Espace de recherche multicritère OSINT : identité, contact, localisation, comptes en ligne et champs avancés.">
-    <title>RedTrace — Recherche OSINT</title>
+    <meta name="theme-color" content="#f4f5f1">
+    <meta name="description" content="KIKZXW — espace privé de recherche multicritère et d'analyse OSINT.">
+    <title>KIKZXW — Intelligence de recherche</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -14,30 +14,66 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
-        <a class="brand" href="/" aria-label="RedTrace, accueil">
-          <span class="brand-mark">R<span>.</span></span>
-          <span class="brand-copy">redtrace<small>RECHERCHE OSINT</small></span>
+      <aside class="sidebar" id="app-sidebar">
+        <a class="brand" href="/" aria-label="KIKZXW, accueil">
+          <span class="brand-mark">K<span>.</span></span>
+          <span class="brand-copy">KIKZXW<small>INTELLIGENCE OSINT</small></span>
         </a>
         <div class="workspace-label">WORKSPACE</div>
         <nav class="side-nav" aria-label="Navigation principale">
           <button class="nav-item active" data-view="overview" aria-label="Tableau de bord" aria-current="page" title="Tableau de bord"><span class="nav-icon" aria-hidden="true">▦</span><span>Tableau de bord</span></button>
           <button class="nav-item" data-view="search" aria-label="Recherche" title="Recherche"><span class="nav-icon nav-icon-loupe" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span><span>Recherche</span></button>
           <button class="nav-item" data-view="history" aria-label="Historique" title="Historique de recherche"><span class="nav-icon" aria-hidden="true">◷</span><span>Historique</span></button>
+          <button class="nav-item hidden" id="nav-admin" data-view="admin" aria-label="Administration" title="Gestion des comptes"><span class="nav-icon" aria-hidden="true">⚙</span><span>Administration</span></button>
         </nav>
         <div class="sidebar-bottom">
           <div class="local-card"><span class="status-dot"></span><div><strong>Recherche multicritère</strong><small>Requêtes relayées · rien n'est stocké</small></div></div>
-          <div class="sidebar-foot">REDTRACE <span>v1.0</span></div>
+          <div class="sidebar-foot">KIKZXW <span>v1.0</span></div>
         </div>
       </aside>
 
       <main class="main">
         <header class="topbar">
           <div class="breadcrumbs"><span>WORKSPACE</span><b>/</b><strong id="breadcrumb-current">Tableau de bord</strong></div>
-          <div class="topbar-right"><span class="api-status"><i></i> Console active</span><span class="top-divider"></span><span class="avatar">RT</span><span class="profile-name">Analyste<span>INSTANCE PUBLIQUE</span></span></div>
+          <div class="topbar-right">
+            <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Masquer la barre latérale" aria-controls="app-sidebar" aria-expanded="true" title="Masquer la barre latérale">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M14 9l-2 3 2 3"/></svg>
+            </button>
+            <span class="api-status"><i></i> Console active</span>
+            <span class="top-divider"></span>
+            <span class="user-chip hidden" id="user-chip" title="Session connectée">
+              <span class="user-avatar" id="user-avatar">?</span>
+              <span class="user-copy"><strong id="user-name">—</strong><small id="user-role">MEMBRE</small></span>
+            </span>
+            <button class="text-button topbar-action" id="logout-button" type="button">Déconnexion</button>
+          </div>
         </header>
 
         <section class="view active" id="view-overview">
+          <section class="welcome-hero" aria-labelledby="welcome-title">
+            <div class="welcome-copy">
+              <div class="eyebrow"><span class="live-pulse"></span> ESPACE D'ANALYSE PRIVÉ</div>
+              <p class="hero-overline">VOTRE ESPACE DE RECHERCHE</p>
+              <h1 id="welcome-title">KIKZXW<span class="hero-period">.</span></h1>
+              <p class="hero-description">Chaque indice compte. Croisez les informations, explorez les correspondances et gardez le contrôle de vos recherches.</p>
+              <div class="hero-actions">
+                <button class="button button-primary" type="button" data-go="search"><span class="button-label">Démarrer une recherche</span><span>↗</span></button>
+                <button class="button button-secondary" type="button" data-go="history">Voir l'activité <span>→</span></button>
+              </div>
+              <div class="hero-trust"><span><i class="status-dot"></i> Historique éphémère</span><span>Recherche multicritère</span></div>
+            </div>
+            <div class="hero-art" aria-hidden="true">
+              <div class="hero-art-glow"></div>
+              <div class="hero-orbit hero-orbit-outer"></div>
+              <div class="hero-orbit hero-orbit-inner"></div>
+              <div class="hero-crosshair hero-crosshair-one"></div>
+              <div class="hero-crosshair hero-crosshair-two"></div>
+              <div class="hero-signal"><span></span><span></span><span></span></div>
+              <div class="hero-art-caption"><span>01 / SIGNAL</span><strong>Explorer les connexions</strong></div>
+              <svg class="hero-mark" viewBox="0 0 120 120" fill="none"><path d="M26 92V28h20l28 38V28h20v64H74L46 54v38H26Z" stroke="currentColor" stroke-width="2"/><circle cx="60" cy="60" r="52" stroke="currentColor" stroke-opacity=".2"/><circle cx="60" cy="60" r="39" stroke="currentColor" stroke-opacity=".14" stroke-dasharray="2 5"/></svg>
+            </div>
+          </section>
+          <div class="overview-section-heading"><div><span class="section-kicker">VUE D'ENSEMBLE</span><h2>Votre activité</h2></div><span class="overview-private"><i class="status-dot"></i> Session privée</span></div>
           <div class="overview-metrics">
             <article class="stat-card search-total-card">
               <div class="stat-top"><span>RECHERCHES CETTE SESSION</span><span class="stat-icon red" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span></div>
@@ -59,7 +95,7 @@
               <div id="overview-activity" class="activity-list"></div>
             </section>
           </div>
-          <footer class="page-footer"><span>REDTRACE OSINT</span><span>Historique éphémère, supprimé au rechargement de l'onglet</span></footer>
+          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Historique éphémère, supprimé au rechargement de l'onglet</span></footer>
         </section>
 
         <section class="view" id="view-search">
@@ -79,6 +115,7 @@
                 <div class="form-actions-info">
                   <span class="form-footnote"><i class="status-dot"></i> Requêtes relayées par le serveur · aucune donnée stockée</span>
                   <label class="field-check flexible-toggle" title="Élargit les correspondances en tolérant les variantes"><input type="checkbox" name="flexible"><span>Recherche approximative</span></label>
+                  <button class="text-button save-search" type="button" id="save-search" title="Enregistrer les critères pour réutilisation rapide">☆ Enregistrer</button>
                 </div>
                 <div class="form-actions-main">
                   <div id="search-pager" class="search-pager hidden" aria-label="Pagination des résultats"></div>
@@ -90,17 +127,72 @@
           <section class="panel result-panel hidden" id="search-result-panel">
             <div class="panel-heading"><div><span class="section-kicker">RÉSULTATS DE LA RECHERCHE</span><h2 id="search-result-title">Résultats de la recherche</h2></div><span class="result-status" id="search-result-status" role="status" aria-live="polite"></span></div>
             <div id="search-result-summary" class="result-summary"></div>
+            <div class="result-toolbar" id="result-toolbar">
+              <label class="field search-filter result-filter"><span>FILTRER LES RÉSULTATS AFFICHÉS</span><input id="result-filter" type="search" placeholder="Ex. Paris, @mail…" autocomplete="off"></label>
+              <div class="result-toolbar-actions">
+                <button class="text-button" type="button" id="copy-results">⧉ Copier (JSON)</button>
+                <button class="text-button" type="button" id="export-csv">↓ CSV</button>
+                <button class="text-button" type="button" id="export-json">↓ JSON</button>
+              </div>
+            </div>
+            <div class="result-map-slot" id="search-result-map"></div>
             <div class="result-sections" id="search-result-sections"></div>
           </section>
-          <footer class="page-footer"><span>REDTRACE OSINT</span><span>Requêtes relayées par le serveur · aucune donnée stockée</span></footer>
+          <section class="panel saved-panel" id="saved-panel">
+            <div class="panel-heading">
+              <div><span class="section-kicker">RACCOURCIS</span><h2>Recherches enregistrées</h2></div>
+              <span class="panel-count" id="saved-count">00 ENREGISTRÉE</span>
+            </div>
+            <div id="saved-list" class="saved-list"></div>
+          </section>
+          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Requêtes relayées par le serveur · aucune donnée stockée</span></footer>
         </section>
 
         <section class="view" id="view-history">
           <div class="page-intro"><div class="eyebrow">JOURNAL ÉPHÉMÈRE</div><h1>Historique de recherche<span class="red-dot">.</span></h1><p class="subheading">Recherches réalisées dans l'onglet actuel uniquement.</p></div>
           <section class="panel history-panel"><div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Recherches effectuées</h2></div><span class="panel-count" id="history-count">00 ENTRÉE</span></div><div id="history-list" class="activity-list"></div></section>
-          <footer class="page-footer"><span>REDTRACE OSINT</span><span>L'historique est supprimé au rechargement de l'onglet</span></footer>
+          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>L'historique est supprimé au rechargement de l'onglet</span></footer>
+        </section>
+        <section class="view" id="view-admin">
+          <div class="page-intro"><div class="eyebrow">GESTION</div><h1>Administration<span class="red-dot">.</span></h1><p class="subheading">Comptes, rôles et statistiques de la plateforme.</p></div>
+          <div class="overview-metrics admin-metrics">
+            <article class="stat-card"><div class="stat-top"><span>COMPTES</span><span class="stat-icon red" aria-hidden="true">●</span></div><div class="stat-value" id="admin-stat-users">00</div><div class="stat-foot">Utilisateurs enregistrés.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>RECHERCHES TOTALES</span><span class="stat-icon red" aria-hidden="true">⌕</span></div><div class="stat-value" id="admin-stat-searches">00</div><div class="stat-foot">Recherches lancées par tous les comptes.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>RACCOURCIS</span><span class="stat-icon red" aria-hidden="true">★</span></div><div class="stat-value" id="admin-stat-saved">00</div><div class="stat-foot">Recherches enregistrées.</div></article>
+          </div>
+          <section class="panel admin-panel">
+            <div class="panel-heading"><div><span class="section-kicker">UTILISATEURS</span><h2>Comptes et rôles</h2></div><button class="text-button" id="admin-refresh" type="button">Rafraîchir <span>↻</span></button></div>
+            <div class="admin-table-wrap">
+              <table class="admin-table">
+                <thead><tr><th>UTILISATEUR</th><th>ID</th><th>RÔLE</th><th>RECH.</th><th>CRÉÉ LE</th><th>ACTIONS</th></tr></thead>
+                <tbody id="admin-users-body"></tbody>
+              </table>
+            </div>
+            <div id="admin-empty" class="empty-state hidden"><span class="empty-symbol">⚙</span><strong>Aucun compte</strong></div>
+          </section>
+          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Seuls les administrateurs peuvent modifier les rôles</span></footer>
         </section>
       </main>
+    </div>
+
+    <div class="auth-overlay" id="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <div class="auth-card">
+        <div class="auth-brand">
+          <span class="brand-mark">K<span>.</span></span>
+          <div><strong id="auth-title">KIKZXW</strong><small>RECHERCHE OSINT · ACCÈS COMPTES</small></div>
+        </div>
+        <div class="auth-tabs" role="tablist">
+          <button class="auth-tab active" id="auth-tab-login" type="button" role="tab" aria-selected="true">Connexion</button>
+          <button class="auth-tab" id="auth-tab-register" type="button" role="tab" aria-selected="false">Créer un compte</button>
+        </div>
+        <form id="auth-form" class="auth-form">
+          <label class="field"><span>NOM D'UTILISATEUR</span><input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Ex. analyste" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9._-]{3,24}"></label>
+          <label class="field"><span>MOT DE PASSE</span><span class="auth-password-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="8 caractères minimum" required minlength="8" maxlength="200"><button class="auth-reveal" id="auth-reveal" type="button" aria-label="Afficher le mot de passe">○</button></span></label>
+          <div id="auth-error" class="result-error hidden" role="alert"></div>
+          <button class="button button-primary auth-submit" type="submit" id="auth-submit"><span class="button-label">Se connecter</span><span>→</span></button>
+        </form>
+        <p class="auth-note" id="auth-note">Le premier compte créé devient administrateur. Les suivants sont des membres.</p>
+      </div>
     </div>
   </body>
 </html>
