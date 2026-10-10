@@ -14,7 +14,7 @@ Ouvrez ensuite l'adresse affichée dans la console (par défaut `http://<hôte>:
 
 L'historique reste en mémoire dans l'onglet et disparaît lors de son rechargement. Chaque entrée conserve ses critères et sa réponse en mémoire : le bouton « Ouvrir » restaure la recherche et ses résultats sans relancer la requête. Les résultats ne sont pas sauvegardés sur le serveur.
 La carte des résultats place les points à partir des coordonnées source ou d'une liste locale de grandes villes ; elle n'envoie aucune adresse à un service cartographique tiers. La barre latérale peut être masquée depuis l'en-tête.
-Les comptes sont gérés par le serveur : la première inscription devient administrateur, les suivantes sont membres. L'authentification ouvre une session protégée par cookie ; les comptes et mots de passe hachés sont enregistrés dans le dossier de données configuré par `DATA_DIR` (par défaut `data/`).
+Les comptes sont gérés par le serveur : la première inscription devient administrateur, les suivantes sont membres. L'authentification ouvre une session protégée par cookie ; les comptes et mots de passe hachés sont enregistrés dans le dossier de données configuré par `DATA_DIR` (par défaut `data/`) en mode Node.js. Sur Cloudflare, les comptes et sessions sont conservés dans le stockage SQLite persistant d'un Durable Object.
 
 ## Variables d'environnement
 
@@ -44,12 +44,14 @@ Les en-têtes de sécurité (CSP, `X-Frame-Options: DENY`, `X-Content-Type-Optio
 
 Pour un déploiement statique Cloudflare Workers avec Wrangler, `.assetsignore` limite les ressources publiées aux fichiers de l'interface et exclut notamment `node_modules/`, qui contient des fichiers trop volumineux pour les assets Workers.
 
-Le fichier `wrangler.jsonc` configure le Worker Cloudflare qui sert les assets du site et relaie `POST /api/search` vers le service de recherche externe. Déployez avec `npx wrangler deploy`.
+Le fichier `wrangler.jsonc` configure le Worker Cloudflare, son Durable Object `AuthStore` (comptes et sessions) et les assets du site. Le premier déploiement applique la migration SQLite automatiquement. Déployez avec `npx wrangler deploy`. Les comptes Node.js locaux et ceux de Cloudflare utilisent des stockages distincts.
 
 ## Endpoints
 
-- `POST /api/search` — relais vers le service de recherche externe. Corps JSON acceptant les 25 critères de recherche (champs texte : identité, naissance, contact, localisation, apps et champs avancés ; entiers : `annee_naissance` 1800-2100, `jour_naissance` 1-31, `mois_naissance` 1-12) plus `page`, `per_page` (1-100) et `flexible` (booléen, recherche approximative). Les trois entiers de naissance sont convertis côté serveur en critère `date_naissance` partiel (`AAAA`, `AAAA-MM` ou `AAAA-MM-JJ`) : le service de recherche n'expose pas de champ jour/mois/année. Toute clé inconnue est ignorée, au moins un critère est requis. La réponse du service (`status`, `message`, `timestamp`, `data.results`, `meta`) est renvoyée telle quelle. Requête limitée à 20 secondes. Toute autre route `/api/*` renvoie un 404.
+- `POST /api/search` — relais vers le service de recherche externe. Corps JSON acceptant les 25 critères de recherche (champs texte : identité, naissance, contact, localisation, apps et champs avancés ; entiers : `annee_naissance` 1800-2100, `jour_naissance` 1-31, `mois_naissance` 1-12) plus `page`, `per_page` (1-100) et `flexible` (booléen, recherche approximative). Les trois entiers de naissance sont convertis côté serveur en critère `date_naissance` partiel (`AAAA`, `AAAA-MM` ou `AAAA-MM-JJ`) : le service de recherche n'expose pas de champ jour/mois/année. Toute clé inconnue est ignorée, au moins un critère est requis. La réponse du service (`status`, `message`, `timestamp`, `data.results`, `meta`) est renvoyée telle quelle. Requête limitée à 20 secondes. Cette route de recherche est indépendante des routes d'authentification listées ci-dessous.
+- `POST /api/auth/register` et `POST /api/auth/login` — création de compte et ouverture de session avec cookie HTTP-only, Secure en HTTPS, mot de passe haché PBKDF2-SHA-256 et limitation de tentatives.
+- `GET /api/auth/me` et `POST /api/auth/logout` — vérification et fermeture de session.
 
-Le relais refuse les réponses vides, JSON invalides ou non-objet, ainsi que celles dépassant 8 Mio. L'interface vérifie également la présence d'une liste `results` avant d'afficher un succès ; les entrées dont la forme n'est pas un objet sont ignorées avec un avertissement. Lancez `npm test` pour vérifier les cas de réponse valides et malformés du Worker Cloudflare.
+Le relais refuse les réponses vides, JSON invalides ou non-objet, ainsi que celles dépassant 8 Mio. L'interface vérifie également la présence d'une liste `results` avant d'afficher un succès ; les entrées dont la forme n'est pas un objet sont ignorées avec un avertissement. Lancez `npm test` pour vérifier les routes Cloudflare d'authentification ainsi que les réponses valides et malformées du Worker.
 
 N'utilisez l'outil que pour des recherches que vous êtes autorisé à effectuer. Avant toute exposition publique, configurez l'authentification (`AUTH_USER` / `AUTH_PASS`), terminez HTTPS (variables `TLS_CERT` / `TLS_KEY` ou reverse proxy) et ajustez la limitation de débit.
