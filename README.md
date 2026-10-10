@@ -12,8 +12,9 @@ npm start
 
 Ouvrez ensuite l'adresse affichée dans la console (par défaut `http://<hôte>:3000`). Aucun paquet externe n'est nécessaire.
 
-L'historique reste en mémoire dans l'onglet et disparaît lors de son rechargement. Les résultats sont affichés dans l'interface sans être sauvegardés sur le serveur.
-La carte des résultats place les points uniquement lorsque la source fournit des coordonnées ; elle n'envoie aucune adresse à un service cartographique tiers. La barre latérale peut être masquée depuis l'en-tête.
+L'historique reste en mémoire dans l'onglet et disparaît lors de son rechargement. Chaque entrée conserve ses critères et sa réponse en mémoire : le bouton « Ouvrir » restaure la recherche et ses résultats sans relancer la requête. Les résultats ne sont pas sauvegardés sur le serveur.
+La carte des résultats place les points à partir des coordonnées source ou d'une liste locale de grandes villes ; elle n'envoie aucune adresse à un service cartographique tiers. La barre latérale peut être masquée depuis l'en-tête.
+Les comptes sont gérés par le serveur : la première inscription devient administrateur, les suivantes sont membres. L'authentification ouvre une session protégée par cookie ; les comptes et mots de passe hachés sont enregistrés dans le dossier de données configuré par `DATA_DIR` (par défaut `data/`).
 
 ## Variables d'environnement
 

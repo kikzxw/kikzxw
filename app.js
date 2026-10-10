@@ -494,9 +494,35 @@ function searchResultCard(record, index) {
   return card;
 }
 
+const knownLocations = new Map([
+  ["paris", [48.8566, 2.3522]], ["lyon", [45.764, 4.8357]], ["marseille", [43.2965, 5.3698]],
+  ["toulouse", [43.6047, 1.4442]], ["nice", [43.7102, 7.262]], ["nantes", [47.2184, -1.5536]],
+  ["strasbourg", [48.5734, 7.7521]], ["montpellier", [43.6108, 3.8767]], ["bordeaux", [44.8378, -0.5792]],
+  ["lille", [50.6292, 3.0573]], ["rennes", [48.1173, -1.6778]], ["reims", [49.2583, 4.0317]],
+  ["le havre", [49.4944, 0.1079]], ["saint-etienne", [45.4397, 4.3872]], ["toulon", [43.1242, 5.928]],
+  ["grenoble", [45.1885, 5.7245]], ["dijon", [47.322, 5.0415]], ["angers", [47.4784, -0.5632]],
+  ["nimes", [43.8367, 4.3601]], ["villeurbanne", [45.7719, 4.8902]], ["clermont-ferrand", [45.7772, 3.087]],
+  ["limoges", [45.8336, 1.2611]], ["tours", [47.3941, 0.6848]], ["amiens", [49.8941, 2.2958]],
+  ["metz", [49.1193, 6.1757]], ["perpignan", [42.6887, 2.8948]], ["besancon", [47.2378, 6.0241]],
+  ["orleans", [47.9029, 1.9093]], ["rouen", [49.4432, 1.0993]], ["nancy", [48.6921, 6.1844]],
+  ["caen", [49.1829, -0.3707]], ["avignon", [43.9493, 4.8055]], ["versailles", [48.8014, 2.1301]],
+  ["poitiers", [46.5802, 0.3404]], ["la rochelle", [46.1603, -1.1511]], ["brest", [48.3904, -4.4861]],
+  ["ajaccio", [41.9192, 8.7386]], ["bastia", [42.6973, 9.45]], ["monaco", [43.7384, 7.4246]],
+  ["bruxelles", [50.8503, 4.3517]], ["geneve", [46.2044, 6.1432]], ["montreal", [45.5019, -73.5674]],
+  ["london", [51.5072, -0.1276]], ["londres", [51.5072, -0.1276]], ["new york", [40.7128, -74.006]],
+]);
+
 function coordinateFrom(value) {
-  if (typeof value === "string" && value.trim()) value = Number(value.trim().replace(",", "."));
+  if (typeof value === "string" && value.trim()) {
+    const normalized = value.trim().replace(",", ".");
+    if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return null;
+    value = Number(normalized);
+  }
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeLocationName(value) {
+  return value.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
 function extractResultLocation(record, index) {
@@ -504,19 +530,21 @@ function extractResultLocation(record, index) {
   let latitude = null;
   let longitude = null;
   let label = "";
+  const normalizedFields = new Map();
 
   for (const source of sources) {
     for (const [rawKey, value] of Object.entries(source)) {
-      const key = rawKey.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+      const key = normalizeLocationName(rawKey).replace(/[^a-z]/g, "");
+      normalizedFields.set(key, value);
       const number = coordinateFrom(value);
-      if (number !== null && /^(lat|latitude|geolatitude|coordonneeslatitude)$/.test(key)) latitude = number;
-      if (number !== null && /^(lon|lng|longitude|geolongitude|coordonneeslongitude)$/.test(key)) longitude = number;
+      if (number !== null && /^(lat|latitude|geolatitude|coordonneeslatitude|gpslatitude)$/.test(key)) latitude = number;
+      if (number !== null && /^(lon|lng|long|longitude|geolongitude|coordonneeslongitude|gpslongitude)$/.test(key)) longitude = number;
     }
   }
 
-  const labelKeys = ["ville", "localite", "adresse", "lieu", "region", "departement", "pays", "code_postal"];
+  const labelKeys = ["ville", "localite", "adresse", "lieu", "region", "departement", "pays", "codepostal"];
   for (const key of labelKeys) {
-    const value = record[key] ?? sources.slice(1).map((source) => source[key]).find(hasDisplayValue);
+    const value = normalizedFields.get(key);
     if (hasDisplayValue(value)) {
       label = formatValue(value);
       break;
@@ -526,8 +554,21 @@ function extractResultLocation(record, index) {
     latitude = null;
     longitude = null;
   }
+  if (latitude === null || longitude === null) {
+    const placeText = label || [...normalizedFields.entries()]
+      .filter(([key]) => ["ville", "localite", "adresse", "lieu", "region", "departement"].includes(key))
+      .map(([, value]) => typeof value === "string" ? value : "")
+      .join(" ");
+    const normalizedPlace = normalizeLocationName(placeText);
+    const match = [...knownLocations.entries()]
+      .sort(([nameA], [nameB]) => nameB.length - nameA.length)
+      .find(([name]) => new RegExp(`(^|[^a-z])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`).test(normalizedPlace));
+    if (match) [latitude, longitude] = match[1];
+  }
   if (!label && latitude !== null && longitude !== null) label = `Lieu ${index + 1}`;
-  return label || latitude !== null ? { label: label || `Lieu ${index + 1}`, latitude, longitude, index } : null;
+  return label || (latitude !== null && longitude !== null)
+    ? { label: label || `Lieu ${index + 1}`, latitude, longitude, index }
+    : null;
 }
 
 function renderResultMap(results) {
@@ -557,27 +598,41 @@ function renderResultMap(results) {
       parent.append(node);
       return node;
     };
-    const left = 44;
-    const right = 856;
-    const top = 34;
-    const bottom = 306;
-    for (let index = 0; index <= 8; index += 1) {
-      const x = left + (right - left) * index / 8;
+    const left = 30;
+    const right = 870;
+    const top = 28;
+    const bottom = 332;
+    for (let index = 0; index <= 12; index += 1) {
+      const x = left + (right - left) * index / 12;
       makeSvg("line", { x1: x, x2: x, y1: top, y2: bottom, class: "map-grid-line" });
     }
-    for (let index = 0; index <= 4; index += 1) {
-      const y = top + (bottom - top) * index / 4;
+    for (let index = 0; index <= 6; index += 1) {
+      const y = top + (bottom - top) * index / 6;
       makeSvg("line", { x1: left, x2: right, y1: y, y2: y, class: "map-grid-line" });
     }
     makeSvg("rect", { x: left, y: top, width: right - left, height: bottom - top, rx: 12, class: "map-frame" });
-
-    const minLongitude = Math.min(...points.map(({ longitude }) => longitude));
-    const maxLongitude = Math.max(...points.map(({ longitude }) => longitude));
-    const minLatitude = Math.min(...points.map(({ latitude }) => latitude));
-    const maxLatitude = Math.max(...points.map(({ latitude }) => latitude));
+    const continents = [
+      "M78 112 105 85 151 70 184 84 205 109 193 132 177 144 169 170 145 184 132 217 111 206 102 178 81 159 69 133Z",
+      "M190 219 213 231 228 258 222 286 207 316 191 300 183 269 173 245Z",
+      "M373 101 390 85 417 88 430 105 420 119 397 118Z",
+      "M412 131 444 128 467 151 462 184 449 207 443 237 422 268 403 249 397 218 384 190 389 160Z",
+      "M465 89 496 72 541 75 568 89 610 85 648 96 682 109 708 131 691 149 657 145 635 158 610 151 594 166 569 155 552 166 528 151 507 155 491 136 468 129Z",
+      "M493 160 514 166 527 188 518 207 502 195Z",
+      "M676 236 710 222 746 234 765 256 748 277 711 275 684 260Z",
+    ];
+    for (const d of continents) makeSvg("path", { d, class: "map-continent" });
+    const project = ({ latitude, longitude }) => {
+      const clampedLatitude = Math.max(-80, Math.min(84, latitude));
+      const mercatorY = Math.log(Math.tan(Math.PI / 4 + clampedLatitude * Math.PI / 360));
+      const north = Math.log(Math.tan(Math.PI / 4 + 84 * Math.PI / 360));
+      const south = Math.log(Math.tan(Math.PI / 4 - 80 * Math.PI / 360));
+      return {
+        x: left + (right - left) * (longitude + 180) / 360,
+        y: top + (bottom - top) * (north - mercatorY) / (north - south),
+      };
+    };
     for (const point of points) {
-      const x = left + (right - left) * (maxLongitude === minLongitude ? .5 : (point.longitude - minLongitude) / (maxLongitude - minLongitude));
-      const y = top + (bottom - top) * (maxLatitude === minLatitude ? .5 : (maxLatitude - point.latitude) / (maxLatitude - minLatitude));
+      const { x, y } = project(point);
       const marker = makeSvg("g", { class: "map-marker" });
       const title = makeSvg("title", {}, marker);
       title.textContent = `${point.label} · ${point.latitude}, ${point.longitude}`;
@@ -586,7 +641,7 @@ function renderResultMap(results) {
       const markerNumber = makeSvg("text", { x, y: y - 19, "text-anchor": "middle", class: "map-marker-number" }, marker);
       markerNumber.textContent = String(point.index + 1);
     }
-    map.append(svg, element("p", "map-caption", "Position calculée à partir des coordonnées fournies dans les résultats · aucun fond cartographique externe."));
+    map.append(svg, element("p", "map-caption", "Carte mondiale schématique · points placés à partir des coordonnées source ou d'une liste locale de grandes villes · aucun service cartographique externe."));
   } else {
     map.append(element("div", "map-unavailable", "Les résultats contiennent des lieux, mais aucune coordonnée géographique exploitable pour les positionner sur la carte."));
   }
@@ -623,6 +678,20 @@ function renderSearchPager(page, pages) {
 
 function hideSearchPager() {
   document.querySelector("#search-pager").classList.add("hidden");
+}
+
+function applyResultFilter() {
+  const filter = document.querySelector("#result-filter");
+  const query = filter.value.trim().toLocaleLowerCase("fr");
+  const cards = [...document.querySelectorAll(".search-result-card")];
+  let visible = 0;
+  for (const card of cards) {
+    const matches = !query || card.textContent.toLocaleLowerCase("fr").includes(query);
+    card.classList.toggle("hidden", !matches);
+    if (matches) visible += 1;
+  }
+  const count = document.querySelector(".search-results-count");
+  if (count) count.textContent = `${visible} AFFICHÉ${visible === 1 ? "" : "S"}`;
 }
 
 function isPlainObject(value) {
@@ -850,6 +919,9 @@ async function runSearch(payload, button) {
   const criteria = Object.keys(payload).filter((key) => !["page", "per_page", "flexible"].includes(key)).length;
   activity.push({
     target: searchQueryTitle(payload),
+    searchPayload: { ...payload },
+    responsePayload: data,
+    statusCode,
     timestamp: Date.now(),
     time: new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date()),
     ok: statusCode >= 200 && statusCode < 300 && !data?.error,
@@ -873,15 +945,47 @@ function renderActivityList(container, emptyMessage) {
   }
 
   for (const item of [...activity].reverse().slice(0, 20)) {
-    const row = element("div", "activity-item");
+    const row = element("article", "activity-item");
     const icon = element("span", "activity-icon", "⌕");
     const main = element("div", "activity-main");
+    const savedDate = new Date(item.timestamp);
+    const formattedTime = Number.isNaN(savedDate.getTime())
+      ? item.time || "Heure inconnue"
+      : new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(savedDate);
     main.append(
       element("div", "activity-title", item.target),
-      element("div", "activity-meta", `${item.time} · ${item.detail || "Recherche multicritère"}`),
+      element("div", "activity-meta", `${formattedTime} · ${item.detail || "Recherche multicritère"}`),
     );
-    row.append(icon, main, element("span", `activity-badge ${item.ok ? "" : "error"}`, item.ok ? "TERMINÉ" : "ERREUR"));
+    const action = element("button", "activity-open", item.ok ? "Ouvrir" : "Reprendre");
+    action.type = "button";
+    action.setAttribute("aria-label", `${item.ok ? "Ouvrir" : "Reprendre"} la recherche : ${item.target}`);
+    action.disabled = !item.searchPayload;
+    action.addEventListener("click", () => restoreActivitySearch(item));
+    row.append(icon, main, element("span", `activity-badge ${item.ok ? "" : "error"}`, item.ok ? "TERMINÉ" : "ERREUR"), action);
     container.append(row);
+  }
+}
+
+function restoreActivitySearch(item) {
+  if (!item.searchPayload) {
+    showToast("Les critères de cette entrée ne sont plus disponibles.", "error");
+    return;
+  }
+  const form = document.querySelector("#search-form");
+  form.reset();
+  document.querySelector("#search-field-filter").value = "";
+  for (const [key, value] of Object.entries(item.searchPayload)) {
+    const field = form.elements.namedItem(key);
+    if (!field || !("value" in field)) continue;
+    field.value = String(value);
+  }
+  updateSearchControls();
+  showView("search");
+  if (item.responsePayload && Number.isInteger(item.statusCode)) {
+    renderSearchResult(item.responsePayload, item.statusCode, item.searchPayload);
+    showToast("Résultats de cette recherche restaurés depuis l'historique.");
+  } else {
+    showToast("Critères restaurés. Relancez la recherche pour obtenir les résultats.", "info");
   }
 }
 
@@ -1043,6 +1147,8 @@ async function apiRequest(path, { method = "GET", body } = {}) {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    credentials: "same-origin",
+    cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
   let payload = null;
@@ -1061,6 +1167,7 @@ function applySession(user) {
   const navAdmin = document.querySelector("#nav-admin");
   if (user) {
     chip.classList.remove("hidden");
+    document.querySelector("#logout-button").classList.remove("hidden");
     document.querySelector("#user-name").textContent = user.username;
     document.querySelector("#user-role").textContent = user.role === "admin" ? "ADMINISTRATEUR" : "MEMBRE";
     document.querySelector("#user-role").classList.toggle("admin", user.role === "admin");
@@ -1069,6 +1176,7 @@ function applySession(user) {
     navAdmin.classList.toggle("hidden", user.role !== "admin");
   } else {
     chip.classList.add("hidden");
+    document.querySelector("#logout-button").classList.add("hidden");
     overlay.classList.remove("hidden");
     navAdmin.classList.add("hidden");
     if (document.querySelector("#view-admin").classList.contains("active")) showView("overview");
@@ -1089,8 +1197,95 @@ function setAuthMode(mode) {
 }
 
 async function refreshSession() {
-  const { ok, payload } = await apiRequest("/api/auth/me");
-  applySession(ok ? payload.user : null);
+  try {
+    const { ok, payload } = await apiRequest("/api/auth/me");
+    if (!ok && payload?.error && !/session inactive|expirée/i.test(payload.error)) {
+      throw new Error(payload.error);
+    }
+    applySession(ok ? payload.user : null);
+  } catch (error) {
+    applySession(null);
+    showToast(error.message || "Impossible de vérifier la session.", "error");
+  }
+}
+
+async function loadAdminPanel() {
+  if (currentUser?.role !== "admin") return;
+  try {
+    const [statsResponse, usersResponse] = await Promise.all([
+      apiRequest("/api/admin/stats"),
+      apiRequest("/api/admin/users"),
+    ]);
+    if (!statsResponse.ok || !usersResponse.ok) {
+      const error = statsResponse.payload?.error || usersResponse.payload?.error || "Chargement de l'administration impossible.";
+      if (statsResponse.status === 401 || usersResponse.status === 401) applySession(null);
+      throw new Error(error);
+    }
+    document.querySelector("#admin-stat-users").textContent = String(statsResponse.payload.users ?? 0).padStart(2, "0");
+    document.querySelector("#admin-stat-searches").textContent = String(statsResponse.payload.searches ?? 0).padStart(2, "0");
+    document.querySelector("#admin-stat-saved").textContent = String(statsResponse.payload.savedSearches ?? 0).padStart(2, "0");
+
+    const body = document.querySelector("#admin-users-body");
+    const users = Array.isArray(usersResponse.payload.users) ? usersResponse.payload.users : [];
+    body.replaceChildren();
+    document.querySelector("#admin-empty").classList.toggle("hidden", users.length > 0);
+    document.querySelector(".admin-table-wrap").classList.toggle("hidden", users.length === 0);
+    for (const user of users) {
+      const row = element("tr");
+      const username = element("td", "admin-username", user.username);
+      const id = element("td", "admin-user-id", user.id);
+      const roleCell = element("td");
+      const role = element("select", "admin-role");
+      role.setAttribute("aria-label", `Rôle de ${user.username}`);
+      for (const [value, label] of [["admin", "Administrateur"], ["membre", "Membre"]]) {
+        const option = element("option", "", label);
+        option.value = value;
+        role.append(option);
+      }
+      role.value = user.role;
+      role.disabled = user.id === currentUser.id;
+      role.addEventListener("change", async () => {
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+            method: "PATCH",
+            body: { role: role.value },
+          });
+          if (!response.ok) throw new Error(response.payload?.error || "Modification du rôle impossible.");
+          showToast(`Rôle de ${user.username} mis à jour.`);
+          await loadAdminPanel();
+        } catch (error) {
+          showToast(error.message || "Modification du rôle impossible.", "error");
+          role.value = user.role;
+        }
+      });
+      roleCell.append(role);
+      const searchCount = element("td", "", String(user.searchCount ?? 0));
+      const created = new Date(user.createdAt);
+      const createdAt = element("td", "", Number.isNaN(created.getTime())
+        ? "—"
+        : new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(created));
+      const actions = element("td");
+      const remove = element("button", "text-button admin-delete", "Supprimer");
+      remove.type = "button";
+      remove.disabled = user.id === currentUser.id;
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Supprimer définitivement le compte « ${user.username} » ?`)) return;
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" });
+          if (!response.ok) throw new Error(response.payload?.error || "Suppression du compte impossible.");
+          showToast(`Compte ${user.username} supprimé.`);
+          await loadAdminPanel();
+        } catch (error) {
+          showToast(error.message || "Suppression du compte impossible.", "error");
+        }
+      });
+      actions.append(remove);
+      row.append(username, id, roleCell, searchCount, createdAt, actions);
+      body.append(row);
+    }
+  } catch (error) {
+    showToast(error.message || "Chargement de l'administration impossible.", "error");
+  }
 }
 
 document.querySelectorAll("[data-view]").forEach((button) => {
@@ -1108,6 +1303,65 @@ document.querySelector("#sidebar-toggle").addEventListener("click", (event) => {
   button.title = label;
 });
 
+document.querySelector("#auth-tab-login").addEventListener("click", () => setAuthMode("login"));
+document.querySelector("#auth-tab-register").addEventListener("click", () => setAuthMode("register"));
+document.querySelector("#auth-reveal").addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const password = document.querySelector("#auth-password");
+  const reveal = password.type === "password";
+  password.type = reveal ? "text" : "password";
+  button.setAttribute("aria-label", reveal ? "Masquer le mot de passe" : "Afficher le mot de passe");
+  button.textContent = reveal ? "●" : "○";
+});
+document.querySelector("#auth-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = document.querySelector("#auth-submit");
+  const label = submit.querySelector(".button-label");
+  const errorBox = document.querySelector("#auth-error");
+  const username = document.querySelector("#auth-username").value.trim();
+  const password = document.querySelector("#auth-password").value;
+  submit.disabled = true;
+  errorBox.classList.add("hidden");
+  label.textContent = authMode === "login" ? "Connexion…" : "Création…";
+  try {
+    const response = await apiRequest(`/api/auth/${authMode === "login" ? "login" : "register"}`, {
+      method: "POST",
+      body: { username, password },
+    });
+    if (!response.ok || !response.payload?.user) {
+      throw new Error(response.payload?.error || "Le serveur a refusé la demande d'authentification.");
+    }
+    applySession(response.payload.user);
+    form.reset();
+    showToast(authMode === "login" ? "Connexion réussie." : "Compte créé, bienvenue sur KIKZXW.");
+    if (response.payload.firstUser) showToast("Premier compte créé : rôle administrateur.");
+  } catch (error) {
+    errorBox.textContent = error.message || "Impossible de joindre le serveur d'authentification.";
+    errorBox.classList.remove("hidden");
+  } finally {
+    submit.disabled = false;
+    label.textContent = authMode === "login" ? "Se connecter" : "Créer le compte";
+  }
+});
+document.querySelector("#logout-button").addEventListener("click", async () => {
+  const button = document.querySelector("#logout-button");
+  button.disabled = true;
+  try {
+    const response = await apiRequest("/api/auth/logout", { method: "POST" });
+    if (!response.ok) throw new Error(response.payload?.error || "La déconnexion a échoué.");
+    applySession(null);
+    setAuthMode("login");
+    showToast("Vous êtes déconnecté.");
+  } catch (error) {
+    showToast(error.message || "Impossible de fermer la session.", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+document.querySelector("#admin-refresh").addEventListener("click", loadAdminPanel);
+document.querySelector("#result-filter").addEventListener("input", applyResultFilter);
+refreshSession();
 
 document.querySelector("#search-form").addEventListener("submit", (event) => {
   event.preventDefault();
