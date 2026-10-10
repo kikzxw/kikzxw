@@ -144,7 +144,7 @@ test("register, login, session lookup, and logout work end-to-end", async (t) =>
   const page = await fetch(`${url}/`);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.match(page.headers.get("content-security-policy"), /https:\/\/\*\.tile\.opentopomap\.org/);
+  assert.match(page.headers.get("content-security-policy"), /connect-src 'self' https:\/\/cdn\.jsdelivr\.net/);
   assert.equal(page.headers.get("x-frame-options"), "DENY");
   assert.equal(page.headers.get("referrer-policy"), "no-referrer");
   assert.equal(page.headers.get("x-content-type-options"), "nosniff");

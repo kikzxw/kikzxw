@@ -537,6 +537,30 @@ const knownLocations = new Map([
   ["london", [51.5072, -0.1276]], ["londres", [51.5072, -0.1276]], ["new york", [40.7128, -74.006]],
 ]);
 
+let worldMapDataPromise;
+const WORLD_MAP_DATA_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json";
+
+function loadWorldMapData() {
+  if (!worldMapDataPromise) {
+    worldMapDataPromise = fetch(WORLD_MAP_DATA_URL, { cache: "force-cache", signal: AbortSignal.timeout(15_000) })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Carte indisponible (HTTP ${response.status}).`);
+        return response.json();
+      })
+      .then((topology) => {
+        if (topology?.type !== "Topology" || !Array.isArray(topology.arcs) || !topology.objects?.countries) {
+          throw new Error("Le format des frontières est invalide.");
+        }
+        return topology;
+      })
+      .catch((error) => {
+        worldMapDataPromise = null;
+        throw error;
+      });
+  }
+  return worldMapDataPromise;
+}
+
 function coordinateFrom(value) {
   if (typeof value === "string" && value.trim()) {
     const normalized = value.trim().replace(",", ".");
@@ -616,239 +640,243 @@ function renderResultMap(results) {
   const map = element("section", "results-map");
   const heading = element("div", "map-heading");
   const headingCopy = element("div");
-  headingCopy.append(element("span", "section-kicker", "RELIEF TOPOGRAPHIQUE"), element("h3", "", "Carte topographique"));
+  headingCopy.append(element("span", "section-kicker", "CARTE DES RÉSULTATS"), element("h3", "", "Répartition géographique"));
   const mapTools = element("div", "map-tools");
-  mapTools.append(element("span", "map-count", `${locations.length} LIEU${locations.length === 1 ? "" : "X"}`));
+  mapTools.append(element("span", "map-count", `${points.length} POINT${points.length === 1 ? "" : "S"}`));
   heading.append(headingCopy, mapTools);
   map.append(heading);
 
-  if (points.length) {
-    const mapViewport = element("div", "terrain-map");
-    mapViewport.setAttribute("role", "region");
-    mapViewport.setAttribute("aria-label", `${points.length} lieu${points.length === 1 ? "" : "x"} sur une carte topographique interactive`);
-    const tileLayer = element("div", "terrain-map-tiles");
-    const markerLayer = element("div", "terrain-map-markers");
-    const mapStatus = element("div", "terrain-map-status", "Chargement du fond topographique…");
-    mapStatus.setAttribute("role", "status");
-    mapViewport.append(tileLayer, markerLayer, mapStatus);
-
-    const zoomOut = element("button", "map-control", "−");
-    zoomOut.type = "button";
-    zoomOut.setAttribute("aria-label", "Dézoomer la carte");
-    zoomOut.title = "Dézoomer";
-    const zoomIn = element("button", "map-control", "+");
-    zoomIn.type = "button";
-    zoomIn.setAttribute("aria-label", "Zoomer la carte");
-    zoomIn.title = "Zoomer";
-    const fit = element("button", "map-control map-control-fit", "Cadrer les lieux");
-    fit.type = "button";
-    fit.setAttribute("aria-label", "Recentrer la carte sur tous les lieux");
-    mapTools.append(zoomOut, zoomIn, fit);
-
-    const attribution = element("div", "map-attribution");
-    const provider = element("a", "", "OpenTopoMap");
-    provider.href = "https://opentopomap.org/";
-    provider.target = "_blank";
-    provider.rel = "noopener noreferrer";
-    provider.setAttribute("aria-label", "OpenTopoMap, s’ouvre dans un nouvel onglet");
-    const contributors = element("a", "", "OpenStreetMap");
-    contributors.href = "https://www.openstreetmap.org/copyright";
-    contributors.target = "_blank";
-    contributors.rel = "noopener noreferrer";
-    contributors.setAttribute("aria-label", "Contributeurs OpenStreetMap, s’ouvre dans un nouvel onglet");
-    attribution.append("Relief ", provider, " · © ", contributors, " · SRTM · CC-BY-SA");
-    mapViewport.append(attribution);
-    map.append(mapViewport);
-
-    const tileSize = 256;
-    const minZoom = 2;
-    const maxZoom = 17;
-    const normalizedPoint = ({ latitude, longitude }) => {
-      const clampedLatitude = Math.max(-85.05112878, Math.min(85.05112878, latitude));
-      const sinLatitude = Math.sin(clampedLatitude * Math.PI / 180);
-      return {
-        x: (longitude + 180) / 360,
-        y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)),
-      };
-    };
-    const normalizedPoints = points.map((point) => ({ point, ...normalizedPoint(point) }));
-    const sortedX = normalizedPoints.map(({ x }) => x).sort((a, b) => a - b);
-    let largestGap = -1;
-    let arcStart = sortedX[0];
-    for (let index = 0; index < sortedX.length; index += 1) {
-      const current = sortedX[index];
-      const next = index === sortedX.length - 1 ? sortedX[0] + 1 : sortedX[index + 1];
-      if (next - current > largestGap) {
-        largestGap = next - current;
-        arcStart = next % 1;
-      }
-    }
-    const arcWidth = 1 - largestGap;
-    const centerX = (arcStart + arcWidth / 2) % 1;
-    const minY = Math.min(...normalizedPoints.map(({ y }) => y));
-    const maxY = Math.max(...normalizedPoints.map(({ y }) => y));
-    const centerY = (minY + maxY) / 2;
-    const normalizedX = (x) => x + Math.round(centerX - x);
-    let zoom = maxZoom;
-    let origin = { x: 0, y: 0 };
-    let tileGeneration = 0;
-    let tileSignature = "";
-    let renderQueued = false;
-    let dragging = null;
-
-    const worldSize = () => tileSize * 2 ** zoom;
-    const clampOriginY = (y) => Math.max(0, Math.min(worldSize() - mapViewport.clientHeight, y));
-    const pointAt = (x, y) => ({
-      x: x * worldSize(),
-      y: y * worldSize(),
-    });
-    const fitPoints = () => {
-      const width = mapViewport.clientWidth;
-      const height = mapViewport.clientHeight;
-      if (!width || !height) return;
-      const padding = 72;
-      const availableWidth = Math.max(1, width - padding * 2);
-      const availableHeight = Math.max(1, height - padding * 2);
-      zoom = maxZoom;
-      while (zoom > minZoom) {
-        const scale = tileSize * 2 ** zoom;
-        if (arcWidth * scale <= availableWidth && (maxY - minY) * scale <= availableHeight) break;
-        zoom -= 1;
-      }
-      const center = pointAt(centerX, centerY);
-      origin = {
-        x: center.x - width / 2,
-        y: clampOriginY(center.y - height / 2),
-      };
-      renderMap();
-    };
-    const scheduleRender = () => {
-      if (renderQueued) return;
-      renderQueued = true;
-      requestAnimationFrame(() => {
-        renderQueued = false;
-        renderMap();
-      });
-    };
-    function renderMap() {
-      const width = mapViewport.clientWidth;
-      const height = mapViewport.clientHeight;
-      if (!width || !height) return;
-
-      const firstTileX = Math.floor(origin.x / tileSize);
-      const lastTileX = Math.floor((origin.x + width) / tileSize);
-      const firstTileY = Math.floor(origin.y / tileSize);
-      const lastTileY = Math.floor((origin.y + height) / tileSize);
-      const visibleTileRows = Math.max(0, Math.min(lastTileY, 2 ** zoom - 1) - Math.max(firstTileY, 0) + 1);
-      const tileCount = (lastTileX - firstTileX + 1) * visibleTileRows;
-      const nextTileSignature = `${zoom}:${firstTileX}:${lastTileX}:${firstTileY}:${lastTileY}`;
-      if (nextTileSignature !== tileSignature) {
-        tileSignature = nextTileSignature;
-        const generation = ++tileGeneration;
-        let loadedTiles = 0;
-        let failedTiles = 0;
-        mapStatus.textContent = "Chargement du fond topographique…";
-        mapStatus.hidden = false;
-        tileLayer.replaceChildren();
-        for (let rawY = firstTileY; rawY <= lastTileY; rawY += 1) {
-          if (rawY < 0 || rawY >= 2 ** zoom) continue;
-          for (let rawX = firstTileX; rawX <= lastTileX; rawX += 1) {
-            const wrappedX = ((rawX % 2 ** zoom) + 2 ** zoom) % 2 ** zoom;
-            const subdomain = "abc"[(wrappedX + rawY) % 3];
-            const tile = document.createElement("img");
-            tile.className = "terrain-map-tile";
-            tile.alt = "";
-            tile.draggable = false;
-            tile.setAttribute("aria-hidden", "true");
-            tile.dataset.tileX = String(rawX);
-            tile.dataset.tileY = String(rawY);
-            tile.onload = () => {
-              if (generation !== tileGeneration) return;
-              loadedTiles += 1;
-              mapStatus.hidden = true;
-            };
-            tile.onerror = () => {
-              if (generation !== tileGeneration) return;
-              failedTiles += 1;
-              if (!loadedTiles && failedTiles === tileCount) {
-                mapStatus.textContent = "Fond topographique indisponible. Vérifiez votre connexion.";
-                mapStatus.hidden = false;
-              }
-            };
-            tile.src = `https://${subdomain}.tile.opentopomap.org/${zoom}/${wrappedX}/${rawY}.png`;
-            tileLayer.append(tile);
-          }
-        }
-      }
-      for (const tile of tileLayer.children) {
-        tile.style.left = `${Number(tile.dataset.tileX) * tileSize - origin.x}px`;
-        tile.style.top = `${Number(tile.dataset.tileY) * tileSize - origin.y}px`;
-      }
-      markerLayer.replaceChildren();
-
-      for (const { point, x, y } of normalizedPoints) {
-        const projected = pointAt(normalizedX(x), y);
-        const screenX = projected.x - origin.x;
-        const screenY = projected.y - origin.y;
-        if (screenX < -20 || screenX > width + 20 || screenY < -24 || screenY > height + 24) continue;
-        const marker = element("span", "terrain-marker", String(point.index + 1));
-        marker.title = `${point.label} · ${point.latitude}, ${point.longitude}`;
-        marker.setAttribute("role", "img");
-        marker.setAttribute("aria-label", `${point.index + 1}. ${point.label}, ${point.latitude}, ${point.longitude}`);
-        marker.style.left = `${screenX}px`;
-        marker.style.top = `${screenY}px`;
-        markerLayer.append(marker);
-      }
-    }
-
-    const changeZoom = (nextZoom, anchorX = mapViewport.clientWidth / 2, anchorY = mapViewport.clientHeight / 2) => {
-      const clampedZoom = Math.max(minZoom, Math.min(maxZoom, nextZoom));
-      if (clampedZoom === zoom) return;
-      const scale = 2 ** (clampedZoom - zoom);
-      const anchor = { x: origin.x + anchorX, y: origin.y + anchorY };
-      zoom = clampedZoom;
-      origin = {
-        x: anchor.x * scale - anchorX,
-        y: clampOriginY(anchor.y * scale - anchorY),
-      };
-      renderMap();
-    };
-    zoomOut.addEventListener("click", () => changeZoom(zoom - 1));
-    zoomIn.addEventListener("click", () => changeZoom(zoom + 1));
-    fit.addEventListener("click", fitPoints);
-    mapViewport.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || event.target.closest(".terrain-marker, a")) return;
-      dragging = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, originX: origin.x, originY: origin.y };
-      mapViewport.setPointerCapture(event.pointerId);
-      mapViewport.classList.add("is-dragging");
-    });
-    mapViewport.addEventListener("pointermove", (event) => {
-      if (!dragging || event.pointerId !== dragging.pointerId) return;
-      origin.x = dragging.originX - (event.clientX - dragging.x);
-      origin.y = clampOriginY(dragging.originY - (event.clientY - dragging.y));
-      scheduleRender();
-    });
-    const finishDrag = (event) => {
-      if (!dragging || event.pointerId !== dragging.pointerId) return;
-      dragging = null;
-      mapViewport.classList.remove("is-dragging");
-      scheduleRender();
-    };
-    mapViewport.addEventListener("pointerup", finishDrag);
-    mapViewport.addEventListener("pointercancel", finishDrag);
-    mapViewport.addEventListener("wheel", (event) => {
-      event.preventDefault();
-      const bounds = mapViewport.getBoundingClientRect();
-      changeZoom(zoom + (event.deltaY < 0 ? 1 : -1), event.clientX - bounds.left, event.clientY - bounds.top);
-    }, { passive: false });
-    if ("ResizeObserver" in window) {
-      resultMapResizeObserver = new ResizeObserver(fitPoints);
-      resultMapResizeObserver.observe(mapViewport);
-    }
-    requestAnimationFrame(fitPoints);
-  } else {
-    map.append(element("div", "map-unavailable", "Les résultats contiennent des lieux, mais aucune coordonnée géographique exploitable pour les positionner sur la carte."));
+  const mapViewport = element("div", "terrain-map vector-map");
+  mapViewport.setAttribute("role", "region");
+  mapViewport.setAttribute("aria-label", `Planisphère avec ${points.length} point${points.length === 1 ? "" : "s"} de localisation`);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("world-map-svg");
+  svg.setAttribute("viewBox", "0 0 1000 500");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Contours vectoriels des pays et localisation des résultats");
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+  gradient.id = "world-map-land";
+  gradient.setAttribute("x1", "0");
+  gradient.setAttribute("y1", "0");
+  gradient.setAttribute("x2", "0.8");
+  gradient.setAttribute("y2", "1");
+  for (const [offset, color] of [["0%", "#234a34"], ["100%", "#142d20"]]) {
+    const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", color);
+    gradient.append(stop);
   }
+  defs.append(gradient);
+  svg.append(defs);
+
+  const plot = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  plot.classList.add("world-map-plot");
+  const countryLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  countryLayer.classList.add("world-country-layer");
+  const markerLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  markerLayer.classList.add("world-marker-layer");
+  plot.append(countryLayer, markerLayer);
+  svg.append(plot);
+  mapViewport.append(svg);
+  const mapStatus = element("div", "terrain-map-status", "Dessin des frontières des pays…");
+  mapStatus.setAttribute("role", "status");
+  mapViewport.append(mapStatus);
+  map.append(mapViewport);
+
+  const zoomOut = element("button", "map-control", "−");
+  zoomOut.type = "button";
+  zoomOut.setAttribute("aria-label", "Dézoomer la carte");
+  zoomOut.title = "Dézoomer";
+  const zoomIn = element("button", "map-control", "+");
+  zoomIn.type = "button";
+  zoomIn.setAttribute("aria-label", "Zoomer la carte");
+  zoomIn.title = "Zoomer";
+  const fit = element("button", "map-control map-control-fit", "Cadrer les lieux");
+  fit.type = "button";
+  fit.setAttribute("aria-label", "Recentrer la carte sur tous les lieux");
+  mapTools.append(zoomOut, zoomIn, fit);
+
+  const project = (latitude, longitude) => ({
+    x: (longitude + 180) / 360 * 1000,
+    y: (90 - latitude) / 180 * 500,
+  });
+  const addFallbackContinents = () => {
+    const silhouettes = [
+      "M65 72 101 47 157 42 187 58 210 74 221 98 208 115 193 120 181 145 160 157 147 182 130 187 120 165 104 151 99 125 80 110 72 92Z",
+      "M205 183 228 193 246 218 249 247 238 272 233 306 219 336 210 369 198 393 187 378 188 350 178 327 182 299 170 274 177 248 169 224 180 206Z",
+      "M420 72 447 58 477 61 490 73 477 88 453 87 438 96 422 89Z",
+      "M449 112 481 98 519 105 548 123 574 129 590 151 572 174 550 183 540 207 525 230 513 261 495 283 479 275 469 250 454 229 445 199 430 176 432 145Z",
+      "M523 76 560 59 606 53 658 62 690 80 727 76 772 92 809 106 834 128 817 148 786 150 766 171 739 177 716 196 693 185 680 160 657 151 641 128 616 120 595 139 575 126 554 133 533 114Z",
+      "M705 188 730 195 742 216 733 236 719 229 708 211Z",
+      "M796 302 833 296 859 310 854 331 826 339 805 326Z",
+      "M861 358 894 349 922 362 934 388 916 407 884 401 864 383Z",
+      "M342 70 371 54 402 60 416 79 402 91 372 87 354 97Z",
+    ];
+    for (const d of silhouettes) {
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", d);
+      path.classList.add("world-country", "world-continent-fallback");
+      countryLayer.append(path);
+    }
+  };
+
+  const drawCountries = (topology) => {
+    const decodedArcs = topology.arcs.map((arc) => {
+      let x = 0;
+      let y = 0;
+      return arc.map(([dx, dy]) => {
+        x += dx;
+        y += dy;
+        return topology.transform
+          ? [x * topology.transform.scale[0] + topology.transform.translate[0], y * topology.transform.scale[1] + topology.transform.translate[1]]
+          : [x, y];
+      });
+    });
+    const getArc = (index) => index < 0 ? [...decodedArcs[~index]].reverse() : decodedArcs[index];
+    const arcPath = (indexes) => {
+      const coordinates = [];
+      for (const index of indexes) {
+        const arc = getArc(index);
+        coordinates.push(...(coordinates.length ? arc.slice(1) : arc));
+      }
+      if (!coordinates.length) return "";
+      return `${coordinates.map(([longitude, latitude], index) => {
+        const { x, y } = project(latitude, longitude);
+        return `${index ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`;
+      }).join(" ")} Z`;
+    };
+    const polygonPath = (polygon) => polygon.map(arcPath).join(" ");
+    const geometry = topology.objects.countries.geometries || [];
+    for (const country of geometry) {
+      const polygons = country.type === "Polygon" ? [country.arcs] : country.arcs;
+      const pathData = polygons.map(polygonPath).filter(Boolean).join(" ");
+      if (!pathData) continue;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", pathData);
+      path.classList.add("world-country");
+      path.setAttribute("fill-rule", "evenodd");
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = country.properties?.name || "Pays";
+      path.append(title);
+      countryLayer.append(path);
+    }
+  };
+
+  const markerNodes = [];
+  for (const point of points) {
+    const { x, y } = project(point.latitude, point.longitude);
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    marker.classList.add("world-marker");
+    marker.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)})`);
+    marker.setAttribute("role", "img");
+    marker.setAttribute("aria-label", `${point.index + 1}. ${point.label}, ${point.latitude}, ${point.longitude}`);
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${point.label} · ${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
+    const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    halo.setAttribute("r", "13");
+    halo.classList.add("world-marker-halo");
+    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    dot.setAttribute("r", "5");
+    dot.classList.add("world-marker-dot");
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("y", "-10");
+    label.textContent = String(point.index + 1);
+    label.classList.add("world-marker-index");
+    marker.append(title, halo, dot, label);
+    markerLayer.append(marker);
+    markerNodes.push({ x, y, point, marker });
+  }
+
+  let zoom = 1;
+  let translateX = 0;
+  let translateY = 0;
+  let dragging = null;
+  const renderTransform = () => {
+    plot.setAttribute("transform", `translate(${translateX.toFixed(2)} ${translateY.toFixed(2)}) scale(${zoom.toFixed(3)})`);
+    for (const { marker } of markerNodes) {
+      marker.querySelector(".world-marker-halo").setAttribute("r", String(13 / zoom));
+      marker.querySelector(".world-marker-dot").setAttribute("r", String(5 / zoom));
+      marker.querySelector(".world-marker-index").setAttribute("y", String(-10 / zoom));
+      marker.querySelector(".world-marker-index").setAttribute("font-size", String(9 / zoom));
+    }
+  };
+  const fitPoints = () => {
+    if (!points.length) {
+      zoom = 1;
+      translateX = 0;
+      translateY = 0;
+      renderTransform();
+      return;
+    }
+    const xs = markerNodes.map(({ x }) => x);
+    const ys = markerNodes.map(({ y }) => y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const spanX = Math.max(80, maxX - minX);
+    const spanY = Math.max(55, maxY - minY);
+    zoom = Math.min(5.5, Math.max(1, Math.min(900 / spanX, 420 / spanY)));
+    translateX = 500 - centerX * zoom;
+    translateY = 250 - centerY * zoom;
+    renderTransform();
+  };
+  const changeZoom = (factor) => {
+    const next = Math.max(1, Math.min(8, zoom * factor));
+    const scale = next / zoom;
+    translateX = 500 - (500 - translateX) * scale;
+    translateY = 250 - (250 - translateY) * scale;
+    zoom = next;
+    renderTransform();
+  };
+  zoomOut.addEventListener("click", () => changeZoom(1 / 1.35));
+  zoomIn.addEventListener("click", () => changeZoom(1.35));
+  fit.addEventListener("click", fitPoints);
+  mapViewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".world-marker")) return;
+    dragging = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, translateX, translateY };
+    mapViewport.setPointerCapture(event.pointerId);
+    mapViewport.classList.add("is-dragging");
+  });
+  mapViewport.addEventListener("pointermove", (event) => {
+    if (!dragging || event.pointerId !== dragging.pointerId) return;
+    const bounds = mapViewport.getBoundingClientRect();
+    translateX = dragging.translateX + (event.clientX - dragging.x) * 1000 / bounds.width;
+    translateY = dragging.translateY + (event.clientY - dragging.y) * 500 / bounds.height;
+    renderTransform();
+  });
+  const finishDrag = (event) => {
+    if (!dragging || event.pointerId !== dragging.pointerId) return;
+    dragging = null;
+    mapViewport.classList.remove("is-dragging");
+  };
+  mapViewport.addEventListener("pointerup", finishDrag);
+  mapViewport.addEventListener("pointercancel", finishDrag);
+  mapViewport.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    changeZoom(event.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+
+  if (points.length) fitPoints();
+  if ("ResizeObserver" in window) {
+    resultMapResizeObserver = new ResizeObserver(() => renderTransform());
+    resultMapResizeObserver.observe(mapViewport);
+  }
+  loadWorldMapData().then((topology) => {
+    if (!mapViewport.isConnected) return;
+    countryLayer.replaceChildren();
+    drawCountries(topology);
+    mapStatus.hidden = true;
+  }).catch(() => {
+    if (!mapViewport.isConnected) return;
+    countryLayer.replaceChildren();
+    addFallbackContinents();
+    mapStatus.textContent = "Contours des pays indisponibles — affichage simplifié.";
+    mapStatus.hidden = false;
+  });
 
   const placeList = element("ul", "map-place-list");
   for (const [index, location] of locations.slice(0, 8).entries()) {
@@ -861,9 +889,7 @@ function renderResultMap(results) {
   }
   if (locations.length > 8) placeList.append(element("li", "map-place-overflow", `+ ${locations.length - 8} autres lieux dans les résultats`));
   map.append(placeList);
-  if (points.length) {
-    map.append(element("p", "map-caption", "Le fond topographique et le relief sont fournis par OpenTopoMap (données OpenStreetMap et SRTM). Le fournisseur des tuiles reçoit les zones de carte chargées."));
-  }
+  map.append(element("p", "map-caption", "Les marqueurs utilisent les coordonnées des résultats ou celles des villes reconnues localement. Les contours vectoriels sont chargés une fois depuis World Atlas / Natural Earth ; aucune adresse n'est envoyée pour géocodage."));
   slot.append(map);
 }
 
