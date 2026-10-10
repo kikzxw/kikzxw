@@ -242,38 +242,35 @@ export class AuthStore {
       const token = newToken();
       const tokenHash = await hashSession(token);
       const users = this.ctx.storage.sql;
-      const user = this.ctx.storage.transactionSync(() => {
-        if (users.exec("SELECT id FROM users WHERE username = ? COLLATE NOCASE", username).toArray().length) {
-          return null;
-        }
-        const createdUser = {
-          id: crypto.randomUUID(),
-          username: displayUsername(username),
-          role: users.exec("SELECT COUNT(*) AS count FROM users").one().count === 0 ? "admin" : "membre",
-          createdAt: new Date().toISOString(),
-          searchCount: 0,
-        };
-        users.exec(
-          "INSERT INTO users (id, username, salt, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-          createdUser.id,
-          createdUser.username,
-          toHex(salt),
-          toHex(passwordHash),
-          createdUser.role,
-          createdUser.createdAt,
-        );
-        users.exec(
-          "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-          tokenHash,
-          createdUser.id,
-          Date.now() + SESSION_TTL_MS,
-        );
-        return createdUser;
-      });
-      if (!user) return authJson(409, { error: "Ce nom d'utilisateur est déjà pris." });
+      if (users.exec("SELECT id FROM users WHERE username = ? COLLATE NOCASE", username).toArray().length) {
+        return authJson(409, { error: "Ce nom d'utilisateur est déjà pris." });
+      }
+      const user = {
+        id: crypto.randomUUID(),
+        username: displayUsername(username),
+        role: users.exec("SELECT COUNT(*) AS count FROM users").one().count === 0 ? "admin" : "membre",
+        createdAt: new Date().toISOString(),
+        searchCount: 0,
+      };
+      users.exec(
+        "INSERT INTO users (id, username, salt, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        user.id,
+        username,
+        toHex(salt),
+        toHex(passwordHash),
+        user.role,
+        user.createdAt,
+      );
+      users.exec(
+        "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+        tokenHash,
+        user.id,
+        Date.now() + SESSION_TTL_MS,
+      );
       const cookie = this.sessionCookie(token, request);
       return authJson(201, { user, firstUser: user.role === "admin" }, { "Set-Cookie": cookie });
     } catch (error) {
+      console.error("Cloudflare account registration failed:", error);
       return authJson(error.status || 500, { error: error.status ? error.message : "Impossible de créer le compte." });
     }
   }
@@ -301,7 +298,7 @@ export class AuthStore {
       }
       const user = {
         id: row.id,
-        username: row.username,
+        username: displayUsername(row.username),
         role: row.role,
         createdAt: row.created_at,
         searchCount: row.search_count,
@@ -309,6 +306,7 @@ export class AuthStore {
       const token = await this.createSession(user.id);
       return authJson(200, { user }, { "Set-Cookie": this.sessionCookie(token, request) });
     } catch (error) {
+      console.error("Cloudflare account login failed:", error);
       return authJson(error.status || 500, { error: error.status ? error.message : "Impossible d'ouvrir la session." });
     }
   }
@@ -352,7 +350,7 @@ export class AuthStore {
     return authJson(200, {
       user: {
         id: row.id,
-        username: row.username,
+        username: displayUsername(row.username),
         role: row.role,
         createdAt: row.created_at,
         searchCount: row.search_count,
