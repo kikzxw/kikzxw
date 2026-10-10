@@ -74,6 +74,17 @@
               <svg class="hero-mark" viewBox="0 0 120 120" fill="none"><path d="M26 92V28h20l28 38V28h20v64H74L46 54v38H26Z" stroke="currentColor" stroke-width="2"/><circle cx="60" cy="60" r="52" stroke="currentColor" stroke-opacity=".2"/><circle cx="60" cy="60" r="39" stroke="currentColor" stroke-opacity=".14" stroke-dasharray="2 5"/></svg>
             </div>
           </section>
+          <div class="dashboard-widgets">
+            <section class="panel matrix-panel" aria-labelledby="matrix-title">
+              <div class="panel-heading"><div><span class="section-kicker">FLUX SYSTÈME</span><h2 id="matrix-title">Matrix</h2></div><span class="panel-count">EN DIRECT</span></div>
+              <div class="matrix-screen"><canvas id="matrix-canvas" aria-hidden="true"></canvas><span class="matrix-overlay">FLUX LOCAL <i class="status-dot"></i></span></div>
+            </section>
+            <section class="panel peaclock-panel" aria-labelledby="peaclock-title">
+              <div class="panel-heading"><div><span class="section-kicker">HORLOGE LOCALE</span><h2 id="peaclock-title">Peaclock</h2></div><span class="panel-count">SYSTÈME</span></div>
+              <div class="peaclock-display"><time id="peaclock-time" aria-label="Heure locale">--:--:--</time><div id="peaclock-date" class="peaclock-date">Chargement…</div></div>
+              <div class="peaclock-footer"><span><i class="status-dot"></i> HORLOGE EN DIRECT</span><button id="peaclock-format" class="text-button" type="button" aria-pressed="false">24 H</button></div>
+            </section>
+          </div>
           <div class="overview-section-heading"><div><span class="section-kicker">VUE D'ENSEMBLE</span><h2>Votre activité</h2></div><span class="overview-private"><i class="status-dot"></i> Session privée</span></div>
           <div class="overview-metrics">
             <article class="stat-card search-total-card">
@@ -94,17 +105,6 @@
             <section class="panel activity-panel">
               <div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Historique</h2></div><button class="text-button" data-go="history">Tout voir <span>→</span></button></div>
               <div id="overview-activity" class="activity-list"></div>
-            </section>
-          </div>
-          <div class="dashboard-widgets">
-            <section class="panel matrix-panel" aria-labelledby="matrix-title">
-              <div class="panel-heading"><div><span class="section-kicker">FLUX SYSTÈME</span><h2 id="matrix-title">Matrix</h2></div><span class="panel-count">EN DIRECT</span></div>
-              <div class="matrix-screen"><canvas id="matrix-canvas" aria-hidden="true"></canvas><span class="matrix-overlay">FLUX LOCAL <i class="status-dot"></i></span></div>
-            </section>
-            <section class="panel peaclock-panel" aria-labelledby="peaclock-title">
-              <div class="panel-heading"><div><span class="section-kicker">HORLOGE LOCALE</span><h2 id="peaclock-title">Peaclock</h2></div><span class="panel-count">SYSTÈME</span></div>
-              <div class="peaclock-display"><time id="peaclock-time" aria-label="Heure locale">--:--:--</time><div id="peaclock-date" class="peaclock-date">Chargement…</div></div>
-              <div class="peaclock-footer"><span><i class="status-dot"></i> HORLOGE EN DIRECT</span><button id="peaclock-format" class="text-button" type="button" aria-pressed="false">24 H</button></div>
             </section>
           </div>
           <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Historique éphémère, supprimé au rechargement de l'onglet</span></footer>
