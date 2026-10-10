@@ -20,10 +20,22 @@ function setSidebarCollapsed(collapsed, persist = true) {
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   sidebarToggle.setAttribute("aria-label", label);
   sidebarToggle.title = label;
-  if (persist) window.localStorage.setItem(sidebarPreferenceKey, String(collapsed));
+  if (persist) {
+    try {
+      window.localStorage.setItem(sidebarPreferenceKey, String(collapsed));
+    } catch {
+      // La préférence reste appliquée dans l'onglet si le stockage est indisponible.
+    }
+  }
 }
 
-setSidebarCollapsed(window.localStorage.getItem(sidebarPreferenceKey) === "true", false);
+let sidebarInitiallyCollapsed = false;
+try {
+  sidebarInitiallyCollapsed = window.localStorage.getItem(sidebarPreferenceKey) === "true";
+} catch {
+  // Le stockage peut être bloqué par le navigateur ou le mode privé.
+}
+setSidebarCollapsed(sidebarInitiallyCollapsed, false);
 
 function showView(name) {
   if (name === "admin" && currentUser?.role !== "admin") name = "overview";
@@ -584,9 +596,17 @@ function extractResultLocation(record, index) {
     : null;
 }
 
+let resultMapResizeObserver = null;
+
+function clearResultMap(slot = document.querySelector("#search-result-map")) {
+  resultMapResizeObserver?.disconnect();
+  resultMapResizeObserver = null;
+  slot.replaceChildren();
+}
+
 function renderResultMap(results) {
   const slot = document.querySelector("#search-result-map");
-  slot.replaceChildren();
+  clearResultMap(slot);
   const locations = results
     .map((record, index) => extractResultLocation(isPlainObject(record) ? record : {}, index))
     .filter(Boolean);
@@ -672,6 +692,7 @@ function renderResultMap(results) {
     let zoom = maxZoom;
     let origin = { x: 0, y: 0 };
     let tileGeneration = 0;
+    let tileSignature = "";
     let renderQueued = false;
     let dragging = null;
 
@@ -714,49 +735,56 @@ function renderResultMap(results) {
       const height = mapViewport.clientHeight;
       if (!width || !height) return;
 
-      const generation = ++tileGeneration;
       const firstTileX = Math.floor(origin.x / tileSize);
       const lastTileX = Math.floor((origin.x + width) / tileSize);
       const firstTileY = Math.floor(origin.y / tileSize);
       const lastTileY = Math.floor((origin.y + height) / tileSize);
       const visibleTileRows = Math.max(0, Math.min(lastTileY, 2 ** zoom - 1) - Math.max(firstTileY, 0) + 1);
       const tileCount = (lastTileX - firstTileX + 1) * visibleTileRows;
-      let loadedTiles = 0;
-      let failedTiles = 0;
-      mapStatus.textContent = "Chargement du fond topographique…";
-      mapStatus.hidden = false;
-      tileLayer.replaceChildren();
-      markerLayer.replaceChildren();
-
-      for (let rawY = firstTileY; rawY <= lastTileY; rawY += 1) {
-        if (rawY < 0 || rawY >= 2 ** zoom) continue;
-        for (let rawX = firstTileX; rawX <= lastTileX; rawX += 1) {
-          const wrappedX = ((rawX % 2 ** zoom) + 2 ** zoom) % 2 ** zoom;
-          const subdomain = "abc"[(wrappedX + rawY) % 3];
-          const tile = document.createElement("img");
-          tile.className = "terrain-map-tile";
-          tile.alt = "";
-          tile.draggable = false;
-          tile.setAttribute("aria-hidden", "true");
-          tile.style.left = `${rawX * tileSize - origin.x}px`;
-          tile.style.top = `${rawY * tileSize - origin.y}px`;
-          tile.onload = () => {
-            if (generation !== tileGeneration) return;
-            loadedTiles += 1;
-            mapStatus.hidden = true;
-          };
-          tile.onerror = () => {
-            if (generation !== tileGeneration) return;
-            failedTiles += 1;
-            if (!loadedTiles && failedTiles === tileCount) {
-              mapStatus.textContent = "Fond topographique indisponible. Vérifiez votre connexion.";
-              mapStatus.hidden = false;
-            }
-          };
-          tile.src = `https://${subdomain}.tile.opentopomap.org/${zoom}/${wrappedX}/${rawY}.png`;
-          tileLayer.append(tile);
+      const nextTileSignature = `${zoom}:${firstTileX}:${lastTileX}:${firstTileY}:${lastTileY}`;
+      if (nextTileSignature !== tileSignature) {
+        tileSignature = nextTileSignature;
+        const generation = ++tileGeneration;
+        let loadedTiles = 0;
+        let failedTiles = 0;
+        mapStatus.textContent = "Chargement du fond topographique…";
+        mapStatus.hidden = false;
+        tileLayer.replaceChildren();
+        for (let rawY = firstTileY; rawY <= lastTileY; rawY += 1) {
+          if (rawY < 0 || rawY >= 2 ** zoom) continue;
+          for (let rawX = firstTileX; rawX <= lastTileX; rawX += 1) {
+            const wrappedX = ((rawX % 2 ** zoom) + 2 ** zoom) % 2 ** zoom;
+            const subdomain = "abc"[(wrappedX + rawY) % 3];
+            const tile = document.createElement("img");
+            tile.className = "terrain-map-tile";
+            tile.alt = "";
+            tile.draggable = false;
+            tile.setAttribute("aria-hidden", "true");
+            tile.dataset.tileX = String(rawX);
+            tile.dataset.tileY = String(rawY);
+            tile.onload = () => {
+              if (generation !== tileGeneration) return;
+              loadedTiles += 1;
+              mapStatus.hidden = true;
+            };
+            tile.onerror = () => {
+              if (generation !== tileGeneration) return;
+              failedTiles += 1;
+              if (!loadedTiles && failedTiles === tileCount) {
+                mapStatus.textContent = "Fond topographique indisponible. Vérifiez votre connexion.";
+                mapStatus.hidden = false;
+              }
+            };
+            tile.src = `https://${subdomain}.tile.opentopomap.org/${zoom}/${wrappedX}/${rawY}.png`;
+            tileLayer.append(tile);
+          }
         }
       }
+      for (const tile of tileLayer.children) {
+        tile.style.left = `${Number(tile.dataset.tileX) * tileSize - origin.x}px`;
+        tile.style.top = `${Number(tile.dataset.tileY) * tileSize - origin.y}px`;
+      }
+      markerLayer.replaceChildren();
 
       for (const { point, x, y } of normalizedPoints) {
         const projected = pointAt(normalizedX(x), y);
@@ -813,7 +841,10 @@ function renderResultMap(results) {
       const bounds = mapViewport.getBoundingClientRect();
       changeZoom(zoom + (event.deltaY < 0 ? 1 : -1), event.clientX - bounds.left, event.clientY - bounds.top);
     }, { passive: false });
-    if ("ResizeObserver" in window) new ResizeObserver(fitPoints).observe(mapViewport);
+    if ("ResizeObserver" in window) {
+      resultMapResizeObserver = new ResizeObserver(fitPoints);
+      resultMapResizeObserver.observe(mapViewport);
+    }
     requestAnimationFrame(fitPoints);
   } else {
     map.append(element("div", "map-unavailable", "Les résultats contiennent des lieux, mais aucune coordonnée géographique exploitable pour les positionner sur la carte."));
@@ -973,7 +1004,7 @@ function renderSearchResult(payload, statusCode = 200, search = {}) {
   const mapSlot = document.querySelector("#search-result-map");
   summary.replaceChildren();
   sections.replaceChildren();
-  mapSlot.replaceChildren();
+  clearResultMap(mapSlot);
 
   if (!ok) {
     currentResults = null;
@@ -1067,7 +1098,7 @@ async function runSearch(payload, button) {
   document.querySelector("#search-result-status").className = "result-status";
   document.querySelector("#search-result-status").textContent = "EN COURS";
   document.querySelector("#search-result-summary").replaceChildren(element("div", "result-note", "Recherche en cours…"));
-  document.querySelector("#search-result-map").replaceChildren();
+  clearResultMap();
   document.querySelector("#search-result-sections").replaceChildren();
 
   let statusCode = 502;
@@ -1208,8 +1239,8 @@ function renderSearchChart() {
 
   const defs = makeSvg("defs", {});
   const gradient = makeSvg("linearGradient", { id: "search-chart-fill", x1: "0", y1: "0", x2: "0", y2: "1" }, defs);
-  makeSvg("stop", { offset: "0", "stop-color": "#ff3047", "stop-opacity": ".35" }, gradient);
-  makeSvg("stop", { offset: "1", "stop-color": "#ff3047", "stop-opacity": "0" }, gradient);
+  makeSvg("stop", { offset: "0", "stop-color": "#54d18a", "stop-opacity": ".35" }, gradient);
+  makeSvg("stop", { offset: "1", "stop-color": "#54d18a", "stop-opacity": "0" }, gradient);
 
   const tickCount = Math.min(3, maximum);
   for (let tick = 0; tick <= tickCount; tick += 1) {
