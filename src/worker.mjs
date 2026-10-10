@@ -20,15 +20,31 @@ const INTEGER_FIELDS = {
   per_page: [1, 100],
 };
 
+const SECURITY_HEADERS = {
+  "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
+
 function jsonResponse(status, payload) {
   return Response.json(payload, {
     status,
     headers: {
       "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "DENY",
-      "Referrer-Policy": "no-referrer",
+      ...SECURITY_HEADERS,
     },
+  });
+}
+
+function secureResponse(response, cacheControl) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+  headers.set("Cache-Control", cacheControl);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
   });
 }
 
@@ -125,13 +141,14 @@ function displayUsername(username) {
 function authJson(status, payload, headers = {}) {
   return Response.json(payload, {
     status,
-    headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...headers },
+    headers: { "Cache-Control": "no-store", ...SECURITY_HEADERS, ...headers },
   });
 }
 
 export class AuthStore {
-  constructor(ctx) {
+  constructor(ctx, env = {}) {
     this.ctx = ctx;
+    this.env = env;
     this.ready = ctx.blockConcurrencyWhile(async () => {
       const sql = ctx.storage.sql;
       sql.exec(
@@ -245,10 +262,20 @@ export class AuthStore {
       if (users.exec("SELECT id FROM users WHERE username = ? COLLATE NOCASE", username).toArray().length) {
         return authJson(409, { error: "Ce nom d'utilisateur est déjà pris." });
       }
+      const isFirstUser = users.exec("SELECT COUNT(*) AS count FROM users").one().count === 0;
+      if (isFirstUser) {
+        if (!this.env.ADMIN_BOOTSTRAP_TOKEN) {
+          return authJson(503, { error: "Initialisez le premier administrateur avec le secret ADMIN_BOOTSTRAP_TOKEN." });
+        }
+        const suppliedToken = typeof body.bootstrapToken === "string" ? encoder.encode(body.bootstrapToken) : new Uint8Array();
+        if (!safeEqual(suppliedToken, encoder.encode(this.env.ADMIN_BOOTSTRAP_TOKEN))) {
+          return authJson(403, { error: "Le jeton d'initialisation administrateur est invalide." });
+        }
+      }
       const user = {
         id: crypto.randomUUID(),
         username: displayUsername(username),
-        role: users.exec("SELECT COUNT(*) AS count FROM users").one().count === 0 ? "admin" : "membre",
+        role: isFirstUser ? "admin" : "membre",
         createdAt: new Date().toISOString(),
         searchCount: 0,
       };
@@ -475,6 +502,35 @@ async function handleSearch(request) {
   }
 }
 
+async function requireSession(request, env) {
+  const headers = new Headers();
+  const cookie = request.headers.get("Cookie");
+  if (cookie) headers.set("Cookie", cookie);
+  const sessionRequest = new Request(new URL("/api/auth/me", request.url), { headers });
+  const response = await handleAuth(sessionRequest, env);
+  return response.status === 200 ? null : response;
+}
+
+async function applySearchLimit(request, env) {
+  if (!env.SEARCH_RATE_LIMITER) {
+    return jsonResponse(503, { error: "La limitation de débit des recherches n'est pas configurée." });
+  }
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  try {
+    const { success } = await env.SEARCH_RATE_LIMITER.limit({ key: `search:${ip}` });
+    if (!success) {
+      return Response.json(
+        { error: "Limite de recherches atteinte. Réessayez dans une minute." },
+        { status: 429, headers: { "Cache-Control": "no-store", "Retry-After": "60", ...SECURITY_HEADERS } },
+      );
+    }
+  } catch (error) {
+    console.error("Cloudflare search rate limiter failed:", error);
+    return jsonResponse(503, { error: "Le service de limitation des recherches est indisponible." });
+  }
+  return null;
+}
+
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
@@ -482,14 +538,25 @@ export default {
       if (!["GET", "POST"].includes(request.method)) {
         return jsonResponse(405, { error: "Méthode non autorisée." });
       }
-      return handleAuth(request, env);
+      return secureResponse(await handleAuth(request, env), "no-store");
     }
     if (pathname === "/api/search") {
       if (request.method !== "POST") {
         return jsonResponse(405, { error: "Méthode non autorisée." });
       }
+      const sessionError = await requireSession(request, env);
+      if (sessionError) return secureResponse(sessionError, "no-store");
+      const rateLimitError = await applySearchLimit(request, env);
+      if (rateLimitError) return rateLimitError;
       return handleSearch(request);
     }
-    return env.ASSETS.fetch(request);
+    if (pathname.startsWith("/api/")) return jsonResponse(404, { error: "Endpoint inconnu." });
+    const response = await env.ASSETS.fetch(request);
+    const cacheControl = ["/", "/index.html"].includes(pathname)
+      ? "no-cache"
+      : ["/styles.css", "/app.js"].includes(pathname)
+        ? "public, max-age=300"
+        : "no-store";
+    return secureResponse(response, cacheControl);
   },
 };

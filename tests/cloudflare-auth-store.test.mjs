@@ -97,12 +97,23 @@ function createContext() {
 }
 
 test("SQLite-backed auth store registers, authenticates, resumes, and logs out without KV transactions", async () => {
-  const store = new AuthStore(createContext());
-  const register = await store.fetch(new Request("https://auth.internal/api/auth/register", {
+  const store = new AuthStore(createContext(), { ADMIN_BOOTSTRAP_TOKEN: "synthetic-bootstrap-token" });
+  const makeRegister = (username, bootstrapToken) => new Request("https://auth.internal/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.42" },
-    body: JSON.stringify({ username: "cloud-user", password: "cloud-test-password" }),
-  }));
+    body: JSON.stringify({
+      username,
+      password: "cloud-test-password",
+      ...(bootstrapToken ? { bootstrapToken } : {}),
+    }),
+  });
+  const missingBootstrapToken = await store.fetch(makeRegister("cloud-user"));
+  assert.equal(missingBootstrapToken.status, 403);
+
+  const invalidBootstrapToken = await store.fetch(makeRegister("cloud-user", "wrong-token"));
+  assert.equal(invalidBootstrapToken.status, 403);
+
+  const register = await store.fetch(makeRegister("cloud-user", "synthetic-bootstrap-token"));
   const registered = await register.json();
   const cookie = register.headers.get("Set-Cookie")?.split(";")[0];
 
@@ -111,12 +122,12 @@ test("SQLite-backed auth store registers, authenticates, resumes, and logs out w
   assert.equal(registered.user.role, "admin");
   assert.ok(cookie);
 
-  const duplicate = await store.fetch(new Request("https://auth.internal/api/auth/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.42" },
-    body: JSON.stringify({ username: "CLOUD-USER", password: "cloud-test-password" }),
-  }));
+  const duplicate = await store.fetch(makeRegister("CLOUD-USER"));
   assert.equal(duplicate.status, 409);
+
+  const member = await store.fetch(makeRegister("second-user"));
+  assert.equal(member.status, 201);
+  assert.equal((await member.json()).user.role, "membre");
 
   const currentSession = await store.fetch(new Request("https://auth.internal/api/auth/me", {
     headers: { Cookie: cookie },
@@ -141,4 +152,16 @@ test("SQLite-backed auth store registers, authenticates, resumes, and logs out w
     headers: { Cookie: cookie },
   }));
   assert.equal(invalidatedSession.status, 401);
+});
+
+test("refuses to create the first Cloudflare account when no bootstrap secret is configured", async () => {
+  const store = new AuthStore(createContext());
+  const response = await store.fetch(new Request("https://auth.internal/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.43" },
+    body: JSON.stringify({ username: "first-user", password: "cloud-test-password" }),
+  }));
+
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /ADMIN_BOOTSTRAP_TOKEN/);
 });

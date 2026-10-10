@@ -15,6 +15,7 @@ const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = path.resolve(__dirname, "..");
 const AUTH_USER = process.env.AUTH_USER || "";
 const AUTH_PASS = process.env.AUTH_PASS || "";
+const ADMIN_BOOTSTRAP_TOKEN = process.env.ADMIN_BOOTSTRAP_TOKEN || "";
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const TLS_CERT_PATH = process.env.TLS_CERT || "";
 const TLS_KEY_PATH = process.env.TLS_KEY || "";
@@ -46,16 +47,36 @@ const MIME_TYPES = {
   ".json": "application/json; charset=utf-8",
 };
 
+const SECURITY_HEADERS = {
+  "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
+
 function sendJson(response, statusCode, payload, extraHeaders) {
   response.writeHead(statusCode, {
     "Content-Type": MIME_TYPES[".json"],
     "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
-    "X-Frame-Options": "DENY",
+    ...SECURITY_HEADERS,
     ...(extraHeaders || {}),
   });
   response.end(JSON.stringify(payload));
+}
+
+function sendText(response, statusCode, text) {
+  response.writeHead(statusCode, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+    ...SECURITY_HEADERS,
+  });
+  response.end(text);
+}
+
+function matchesBootstrapToken(supplied) {
+  const candidate = Buffer.from(typeof supplied === "string" ? supplied : "");
+  const expected = Buffer.from(ADMIN_BOOTSTRAP_TOKEN);
+  return Boolean(expected.length) && candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
 
 function clientIp(request) {
@@ -234,15 +255,25 @@ function readSession(request) {
   return store.getSession(match[1]);
 }
 
-function sessionCookie(token) {
+function secureRequest(request) {
+  if (useTls) return true;
+  if (!TRUST_PROXY) return false;
+  const forwardedProto = String(request.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  return forwardedProto === "https";
+}
+
+function sessionCookie(token, request) {
   const parts = [`${SESSION_COOKIE}=${token}`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=604800"];
-  if (useTls) parts.push("Secure");
+  if (secureRequest(request)) parts.push("Secure");
   return parts.join("; ");
 }
 
-function clearedSessionCookie() {
+function clearedSessionCookie(request) {
   const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
-  if (useTls) parts.push("Secure");
+  if (secureRequest(request)) parts.push("Secure");
   return parts.join("; ");
 }
 
@@ -266,9 +297,18 @@ async function handleRegister(request, response) {
   let body;
   try {
     body = await readAuthBody(request);
-    const user = store.createUser(body.username, body.password);
+    const firstUser = store.userCount() === 0;
+    if (firstUser && !ADMIN_BOOTSTRAP_TOKEN) {
+      sendJson(response, 503, { error: "Initialisez le premier administrateur avec le secret ADMIN_BOOTSTRAP_TOKEN." });
+      return;
+    }
+    if (firstUser && !matchesBootstrapToken(body.bootstrapToken)) {
+      sendJson(response, 403, { error: "Le jeton d'initialisation administrateur est invalide." });
+      return;
+    }
+    const user = store.createUser(body.username, body.password, firstUser ? "admin" : "membre");
     const token = store.createSession(user.id);
-    response.setHeader("Set-Cookie", sessionCookie(token));
+    response.setHeader("Set-Cookie", sessionCookie(token, request));
     sendJson(response, 201, { user: store.publicUser(user), firstUser: user.role === "admin" });
   } catch (error) {
     sendAuthError(response, error);
@@ -285,7 +325,7 @@ async function handleLogin(request, response) {
     body = await readAuthBody(request);
     const user = store.authenticate(body.username, body.password);
     const token = store.createSession(user.id);
-    response.setHeader("Set-Cookie", sessionCookie(token));
+    response.setHeader("Set-Cookie", sessionCookie(token, request));
     sendJson(response, 200, { user: store.publicUser(user) });
   } catch (error) {
     sendAuthError(response, error);
@@ -295,7 +335,7 @@ async function handleLogin(request, response) {
 function handleLogout(request, response) {
   const session = readSession(request);
   if (session) store.revokeSession(session.token);
-  response.setHeader("Set-Cookie", clearedSessionCookie());
+  response.setHeader("Set-Cookie", clearedSessionCookie(request));
   sendJson(response, 200, { ok: true });
 }
 
@@ -418,24 +458,19 @@ function serveStatic(request, response) {
   }
   const asset = STATIC_FILES.get(pathname);
   if (!asset) {
-    response.writeHead(404);
-    response.end("Not found");
+    sendText(response, 404, "Not found");
     return;
   }
 
   fs.readFile(path.join(ROOT, asset.file), (error, content) => {
     if (error) {
-      response.writeHead(error.code === "ENOENT" ? 404 : 500);
-      response.end(error.code === "ENOENT" ? "Not found" : "Server error");
+      sendText(response, error.code === "ENOENT" ? 404 : 500, error.code === "ENOENT" ? "Not found" : "Server error");
       return;
     }
     response.writeHead(200, {
       "Content-Type": asset.type,
-      "Cache-Control": pathname === "/" ? "no-cache" : "public, max-age=300",
-      "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
-      "Referrer-Policy": "no-referrer",
+      "Cache-Control": pathname === "/" || pathname === "/index.html" ? "no-cache" : "public, max-age=300",
+      ...SECURITY_HEADERS,
     });
     response.end(content);
   });
@@ -470,11 +505,14 @@ function handleRequest(request, response) {
   } else if (pathname === "/api/saved" || pathname.startsWith("/api/saved/")) {
     handleSaved(request, response, pathname);
   } else if (request.method === "POST" && pathname === "/api/search") {
-    if (isRateLimited(request, RATE_LIMIT_SEARCH, "search")) {
-      sendJson(response, 429, { error: "Trop de requêtes. Réessayez dans une minute." });
+    if (!readSession(request)) {
+      sendJson(response, 401, { error: "Connexion requise pour effectuer une recherche." });
+    } else if (isRateLimited(request, RATE_LIMIT_SEARCH, "search")) {
+      sendJson(response, 429, { error: "Trop de requêtes. Réessayez dans une minute." }, { "Retry-After": "60" });
       return;
+    } else {
+      handleSearch(request, response);
     }
-    handleSearch(request, response);
   } else if (request.method === "GET") {
     serveStatic(request, response);
   } else if (pathname.startsWith("/api/")) {

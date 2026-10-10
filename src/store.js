@@ -73,11 +73,12 @@ function publicUser(user) {
   };
 }
 
-function createUser(username, password) {
+function createUser(username, password, role = "membre") {
   const normalized = validateCredentials(username, password);
   if (users.some((user) => user.usernameLower === normalized)) {
     throw authError(409, "Ce nom d'utilisateur est déjà pris.");
   }
+  if (!ROLES.has(role)) throw authError(400, "Rôle inconnu (attendu : admin ou membre).");
   const { salt, hash } = hashPassword(password);
   const user = {
     id: crypto.randomUUID(),
@@ -85,7 +86,7 @@ function createUser(username, password) {
     usernameLower: normalized,
     salt,
     hash,
-    role: users.length === 0 ? "admin" : "membre",
+    role,
     createdAt: new Date().toISOString(),
     searchCount: 0,
   };
@@ -109,6 +110,10 @@ function findUserById(id) {
 
 function listUsers() {
   return users.map(publicUser);
+}
+
+function userCount() {
+  return users.length;
 }
 
 function setRole(actor, targetId, role) {
@@ -236,6 +241,7 @@ module.exports = {
   ROLES,
   publicUser,
   createUser,
+  userCount,
   authenticate,
   findUserById,
   listUsers,

@@ -13,6 +13,7 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Aller au contenu principal</a>
     <div class="app-shell">
       <aside class="sidebar" id="app-sidebar">
         <a class="brand" href="/" aria-label="KIKZXW, accueil">
@@ -32,7 +33,7 @@
         </div>
       </aside>
 
-      <main class="main">
+      <main class="main" id="main-content" tabindex="-1">
         <header class="topbar">
           <div class="breadcrumbs"><span>WORKSPACE</span><b>/</b><strong id="breadcrumb-current">Tableau de bord</strong></div>
           <div class="topbar-right">
@@ -109,7 +110,7 @@
                 <div class="search-toolbar-actions"><span class="criteria-count" id="search-criteria-count" aria-live="polite">0 critère renseigné</span><button class="text-button search-reset" type="reset">Tout effacer</button></div>
               </div>
               <div id="search-fields" class="field-groups"></div>
-              <div id="search-form-error" class="result-error hidden"></div>
+              <div id="search-form-error" class="result-error hidden" role="alert"></div>
               <div class="form-divider"></div>
               <div class="form-actions">
                 <div class="form-actions-info">
@@ -191,7 +192,7 @@
           <div id="auth-error" class="result-error hidden" role="alert"></div>
           <button class="button button-primary auth-submit" type="submit" id="auth-submit"><span class="button-label">Se connecter</span><span>→</span></button>
         </form>
-        <p class="auth-note" id="auth-note">Le premier compte créé devient administrateur. Les suivants sont des membres.</p>
+        <p class="auth-note" id="auth-note">Le premier administrateur est créé par l'exploitant avec un jeton secret. Les inscriptions suivantes créent des comptes membres.</p>
       </div>
     </div>
   </body>

@@ -5,14 +5,32 @@ import worker from "../src/worker.mjs";
 const validQuery = { prenom: "Ada" };
 const originalFetch = globalThis.fetch;
 
-async function requestSearch(fetchImplementation, payload = validQuery) {
+function createEnv({ sessionStatus = 200, rateLimitSuccess = true } = {}) {
+  return {
+    AUTH_STORE: {
+      idFromName: () => "auth-store",
+      get: () => ({
+        fetch: async () => Response.json(
+          sessionStatus === 200
+            ? { user: { id: "synthetic-user", role: "membre" } }
+            : { error: "Session inactive ou expirée." },
+          { status: sessionStatus },
+        ),
+      }),
+    },
+    SEARCH_RATE_LIMITER: { limit: async () => ({ success: rateLimitSuccess }) },
+    ASSETS: { fetch: () => new Response("asset") },
+  };
+}
+
+async function requestSearch(fetchImplementation, payload = validQuery, envOptions) {
   globalThis.fetch = fetchImplementation;
   try {
     return await worker.fetch(new Request("https://redtrace.test/api/search", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.15" },
       body: JSON.stringify(payload),
-    }), { ASSETS: { fetch: () => new Response("asset") } });
+    }), createEnv(envOptions));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -81,6 +99,45 @@ test("does not contact SearchHub when the search has no criteria", async () => {
   assert.equal(called, false);
 });
 
+test("rejects search without a valid session before contacting SearchHub", async () => {
+  let called = false;
+  const response = await requestSearch(async () => {
+    called = true;
+    return new Response("{}");
+  }, validQuery, { sessionStatus: 401 });
+
+  assert.equal(response.status, 401);
+  assert.equal(called, false);
+});
+
+test("returns a retry hint when the Cloudflare search binding denies a request", async () => {
+  let called = false;
+  const response = await requestSearch(async () => {
+    called = true;
+    return new Response("{}");
+  }, validQuery, { rateLimitSuccess: false });
+
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get("Retry-After"), "60");
+  assert.equal(called, false);
+});
+
+test("fails closed when the Cloudflare search rate-limit binding is missing", async () => {
+  const response = await worker.fetch(new Request("https://redtrace.test/api/search", {
+    method: "POST",
+    headers: { Cookie: "rt_session=synthetic", "Content-Type": "application/json" },
+    body: JSON.stringify(validQuery),
+  }), {
+    AUTH_STORE: {
+      idFromName: () => "auth-store",
+      get: () => ({ fetch: async () => Response.json({ user: { id: "synthetic-user" } }) }),
+    },
+  });
+
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /limitation de débit/i);
+});
+
 test("rejects methods other than POST without contacting SearchHub", async () => {
   let called = false;
   globalThis.fetch = async () => {
@@ -94,4 +151,26 @@ test("rejects methods other than POST without contacting SearchHub", async () =>
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("adds security and cache headers to static assets and keeps unknown API routes out of assets", async () => {
+  let assetFetches = 0;
+  const env = {
+    ASSETS: {
+      fetch: async () => {
+        assetFetches += 1;
+        return new Response("<!doctype html>", { headers: { "Content-Type": "text/html" } });
+      },
+    },
+  };
+  const page = await worker.fetch(new Request("https://redtrace.test/"), env);
+  assert.equal(page.headers.get("Content-Security-Policy")?.includes("frame-ancestors 'none'"), true);
+  assert.equal(page.headers.get("X-Frame-Options"), "DENY");
+  assert.equal(page.headers.get("Referrer-Policy"), "no-referrer");
+  assert.equal(page.headers.get("X-Content-Type-Options"), "nosniff");
+  assert.equal(page.headers.get("Cache-Control"), "no-cache");
+
+  const unknownApi = await worker.fetch(new Request("https://redtrace.test/api/admin/stats"), env);
+  assert.equal(unknownApi.status, 404);
+  assert.equal(assetFetches, 1);
 });

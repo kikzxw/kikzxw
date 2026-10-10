@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import worker from "../src/worker.mjs";
 
+const authenticatedEnv = {
+  AUTH_STORE: {
+    idFromName: () => "auth-store",
+    get: () => ({
+      fetch: async () => Response.json({ user: { id: "synthetic-user", role: "membre" } }),
+    }),
+  },
+  SEARCH_RATE_LIMITER: { limit: async () => ({ success: true }) },
+};
+
 async function send(payload) {
   const originalFetch = globalThis.fetch;
   let sent = null;
@@ -14,7 +24,7 @@ async function send(payload) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }), {});
+    }), authenticatedEnv);
     return { status: response.status, body: await response.json(), sent };
   } finally {
     globalThis.fetch = originalFetch;
