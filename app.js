@@ -1,4 +1,6 @@
 const views = ["overview", "search", "history", "admin"];
+const sidebarToggle = document.querySelector("#sidebar-toggle");
+const sidebarPreferenceKey = "kikzxw.sidebar-collapsed";
 const viewTitles = {
   overview: "Tableau de bord",
   search: "Recherche",
@@ -11,6 +13,17 @@ let currentUser = null;
 let currentResults = null;
 let savedSearches = [];
 let authMode = "login";
+
+function setSidebarCollapsed(collapsed, persist = true) {
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  const label = collapsed ? "Afficher la barre latérale" : "Masquer la barre latérale";
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  sidebarToggle.setAttribute("aria-label", label);
+  sidebarToggle.title = label;
+  if (persist) window.localStorage.setItem(sidebarPreferenceKey, String(collapsed));
+}
+
+setSidebarCollapsed(window.localStorage.getItem(sidebarPreferenceKey) === "true", false);
 
 function showView(name) {
   if (name === "admin" && currentUser?.role !== "admin") name = "overview";
@@ -583,65 +596,225 @@ function renderResultMap(results) {
   const map = element("section", "results-map");
   const heading = element("div", "map-heading");
   const headingCopy = element("div");
-  headingCopy.append(element("span", "section-kicker", "RÉPARTITION GÉOGRAPHIQUE"), element("h3", "", "Carte des lieux"));
-  heading.append(headingCopy, element("span", "map-count", `${locations.length} LIEU${locations.length === 1 ? "" : "X"}`));
+  headingCopy.append(element("span", "section-kicker", "RELIEF TOPOGRAPHIQUE"), element("h3", "", "Carte topographique"));
+  const mapTools = element("div", "map-tools");
+  mapTools.append(element("span", "map-count", `${locations.length} LIEU${locations.length === 1 ? "" : "X"}`));
+  heading.append(headingCopy, mapTools);
   map.append(heading);
 
   if (points.length) {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 900 360");
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", `${points.length} lieu${points.length === 1 ? "" : "x"} positionné${points.length === 1 ? "" : "s"} à partir des coordonnées des résultats`);
-    const makeSvg = (tag, attributes, parent = svg) => {
-      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
-      parent.append(node);
-      return node;
-    };
-    const left = 30;
-    const right = 870;
-    const top = 28;
-    const bottom = 332;
-    for (let index = 0; index <= 12; index += 1) {
-      const x = left + (right - left) * index / 12;
-      makeSvg("line", { x1: x, x2: x, y1: top, y2: bottom, class: "map-grid-line" });
-    }
-    for (let index = 0; index <= 6; index += 1) {
-      const y = top + (bottom - top) * index / 6;
-      makeSvg("line", { x1: left, x2: right, y1: y, y2: y, class: "map-grid-line" });
-    }
-    makeSvg("rect", { x: left, y: top, width: right - left, height: bottom - top, rx: 12, class: "map-frame" });
-    const continents = [
-      "M78 112 105 85 151 70 184 84 205 109 193 132 177 144 169 170 145 184 132 217 111 206 102 178 81 159 69 133Z",
-      "M190 219 213 231 228 258 222 286 207 316 191 300 183 269 173 245Z",
-      "M373 101 390 85 417 88 430 105 420 119 397 118Z",
-      "M412 131 444 128 467 151 462 184 449 207 443 237 422 268 403 249 397 218 384 190 389 160Z",
-      "M465 89 496 72 541 75 568 89 610 85 648 96 682 109 708 131 691 149 657 145 635 158 610 151 594 166 569 155 552 166 528 151 507 155 491 136 468 129Z",
-      "M493 160 514 166 527 188 518 207 502 195Z",
-      "M676 236 710 222 746 234 765 256 748 277 711 275 684 260Z",
-    ];
-    for (const d of continents) makeSvg("path", { d, class: "map-continent" });
-    const project = ({ latitude, longitude }) => {
-      const clampedLatitude = Math.max(-80, Math.min(84, latitude));
-      const mercatorY = Math.log(Math.tan(Math.PI / 4 + clampedLatitude * Math.PI / 360));
-      const north = Math.log(Math.tan(Math.PI / 4 + 84 * Math.PI / 360));
-      const south = Math.log(Math.tan(Math.PI / 4 - 80 * Math.PI / 360));
+    const mapViewport = element("div", "terrain-map");
+    mapViewport.setAttribute("role", "region");
+    mapViewport.setAttribute("aria-label", `${points.length} lieu${points.length === 1 ? "" : "x"} sur une carte topographique interactive`);
+    const tileLayer = element("div", "terrain-map-tiles");
+    const markerLayer = element("div", "terrain-map-markers");
+    const mapStatus = element("div", "terrain-map-status", "Chargement du fond topographique…");
+    mapStatus.setAttribute("role", "status");
+    mapViewport.append(tileLayer, markerLayer, mapStatus);
+
+    const zoomOut = element("button", "map-control", "−");
+    zoomOut.type = "button";
+    zoomOut.setAttribute("aria-label", "Dézoomer la carte");
+    zoomOut.title = "Dézoomer";
+    const zoomIn = element("button", "map-control", "+");
+    zoomIn.type = "button";
+    zoomIn.setAttribute("aria-label", "Zoomer la carte");
+    zoomIn.title = "Zoomer";
+    const fit = element("button", "map-control map-control-fit", "Cadrer les lieux");
+    fit.type = "button";
+    fit.setAttribute("aria-label", "Recentrer la carte sur tous les lieux");
+    mapTools.append(zoomOut, zoomIn, fit);
+
+    const attribution = element("div", "map-attribution");
+    const provider = element("a", "", "OpenTopoMap");
+    provider.href = "https://opentopomap.org/";
+    provider.target = "_blank";
+    provider.rel = "noopener noreferrer";
+    provider.setAttribute("aria-label", "OpenTopoMap, s’ouvre dans un nouvel onglet");
+    const contributors = element("a", "", "OpenStreetMap");
+    contributors.href = "https://www.openstreetmap.org/copyright";
+    contributors.target = "_blank";
+    contributors.rel = "noopener noreferrer";
+    contributors.setAttribute("aria-label", "Contributeurs OpenStreetMap, s’ouvre dans un nouvel onglet");
+    attribution.append("Relief ", provider, " · © ", contributors, " · SRTM · CC-BY-SA");
+    mapViewport.append(attribution);
+    map.append(mapViewport);
+
+    const tileSize = 256;
+    const minZoom = 2;
+    const maxZoom = 17;
+    const normalizedPoint = ({ latitude, longitude }) => {
+      const clampedLatitude = Math.max(-85.05112878, Math.min(85.05112878, latitude));
+      const sinLatitude = Math.sin(clampedLatitude * Math.PI / 180);
       return {
-        x: left + (right - left) * (longitude + 180) / 360,
-        y: top + (bottom - top) * (north - mercatorY) / (north - south),
+        x: (longitude + 180) / 360,
+        y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)),
       };
     };
-    for (const point of points) {
-      const { x, y } = project(point);
-      const marker = makeSvg("g", { class: "map-marker" });
-      const title = makeSvg("title", {}, marker);
-      title.textContent = `${point.label} · ${point.latitude}, ${point.longitude}`;
-      makeSvg("circle", { cx: x, cy: y, r: 12, class: "map-marker-halo" }, marker);
-      makeSvg("circle", { cx: x, cy: y, r: 5, class: "map-marker-dot" }, marker);
-      const markerNumber = makeSvg("text", { x, y: y - 19, "text-anchor": "middle", class: "map-marker-number" }, marker);
-      markerNumber.textContent = String(point.index + 1);
+    const normalizedPoints = points.map((point) => ({ point, ...normalizedPoint(point) }));
+    const sortedX = normalizedPoints.map(({ x }) => x).sort((a, b) => a - b);
+    let largestGap = -1;
+    let arcStart = sortedX[0];
+    for (let index = 0; index < sortedX.length; index += 1) {
+      const current = sortedX[index];
+      const next = index === sortedX.length - 1 ? sortedX[0] + 1 : sortedX[index + 1];
+      if (next - current > largestGap) {
+        largestGap = next - current;
+        arcStart = next % 1;
+      }
     }
-    map.append(svg, element("p", "map-caption", "Carte mondiale schématique · points placés à partir des coordonnées source ou d'une liste locale de grandes villes · aucun service cartographique externe."));
+    const arcWidth = 1 - largestGap;
+    const centerX = (arcStart + arcWidth / 2) % 1;
+    const minY = Math.min(...normalizedPoints.map(({ y }) => y));
+    const maxY = Math.max(...normalizedPoints.map(({ y }) => y));
+    const centerY = (minY + maxY) / 2;
+    const normalizedX = (x) => x + Math.round(centerX - x);
+    let zoom = maxZoom;
+    let origin = { x: 0, y: 0 };
+    let tileGeneration = 0;
+    let renderQueued = false;
+    let dragging = null;
+
+    const worldSize = () => tileSize * 2 ** zoom;
+    const clampOriginY = (y) => Math.max(0, Math.min(worldSize() - mapViewport.clientHeight, y));
+    const pointAt = (x, y) => ({
+      x: x * worldSize(),
+      y: y * worldSize(),
+    });
+    const fitPoints = () => {
+      const width = mapViewport.clientWidth;
+      const height = mapViewport.clientHeight;
+      if (!width || !height) return;
+      const padding = 72;
+      const availableWidth = Math.max(1, width - padding * 2);
+      const availableHeight = Math.max(1, height - padding * 2);
+      zoom = maxZoom;
+      while (zoom > minZoom) {
+        const scale = tileSize * 2 ** zoom;
+        if (arcWidth * scale <= availableWidth && (maxY - minY) * scale <= availableHeight) break;
+        zoom -= 1;
+      }
+      const center = pointAt(centerX, centerY);
+      origin = {
+        x: center.x - width / 2,
+        y: clampOriginY(center.y - height / 2),
+      };
+      renderMap();
+    };
+    const scheduleRender = () => {
+      if (renderQueued) return;
+      renderQueued = true;
+      requestAnimationFrame(() => {
+        renderQueued = false;
+        renderMap();
+      });
+    };
+    function renderMap() {
+      const width = mapViewport.clientWidth;
+      const height = mapViewport.clientHeight;
+      if (!width || !height) return;
+
+      const generation = ++tileGeneration;
+      const firstTileX = Math.floor(origin.x / tileSize);
+      const lastTileX = Math.floor((origin.x + width) / tileSize);
+      const firstTileY = Math.floor(origin.y / tileSize);
+      const lastTileY = Math.floor((origin.y + height) / tileSize);
+      const visibleTileRows = Math.max(0, Math.min(lastTileY, 2 ** zoom - 1) - Math.max(firstTileY, 0) + 1);
+      const tileCount = (lastTileX - firstTileX + 1) * visibleTileRows;
+      let loadedTiles = 0;
+      let failedTiles = 0;
+      mapStatus.textContent = "Chargement du fond topographique…";
+      mapStatus.hidden = false;
+      tileLayer.replaceChildren();
+      markerLayer.replaceChildren();
+
+      for (let rawY = firstTileY; rawY <= lastTileY; rawY += 1) {
+        if (rawY < 0 || rawY >= 2 ** zoom) continue;
+        for (let rawX = firstTileX; rawX <= lastTileX; rawX += 1) {
+          const wrappedX = ((rawX % 2 ** zoom) + 2 ** zoom) % 2 ** zoom;
+          const subdomain = "abc"[(wrappedX + rawY) % 3];
+          const tile = document.createElement("img");
+          tile.className = "terrain-map-tile";
+          tile.alt = "";
+          tile.draggable = false;
+          tile.setAttribute("aria-hidden", "true");
+          tile.style.left = `${rawX * tileSize - origin.x}px`;
+          tile.style.top = `${rawY * tileSize - origin.y}px`;
+          tile.onload = () => {
+            if (generation !== tileGeneration) return;
+            loadedTiles += 1;
+            mapStatus.hidden = true;
+          };
+          tile.onerror = () => {
+            if (generation !== tileGeneration) return;
+            failedTiles += 1;
+            if (!loadedTiles && failedTiles === tileCount) {
+              mapStatus.textContent = "Fond topographique indisponible. Vérifiez votre connexion.";
+              mapStatus.hidden = false;
+            }
+          };
+          tile.src = `https://${subdomain}.tile.opentopomap.org/${zoom}/${wrappedX}/${rawY}.png`;
+          tileLayer.append(tile);
+        }
+      }
+
+      for (const { point, x, y } of normalizedPoints) {
+        const projected = pointAt(normalizedX(x), y);
+        const screenX = projected.x - origin.x;
+        const screenY = projected.y - origin.y;
+        if (screenX < -20 || screenX > width + 20 || screenY < -24 || screenY > height + 24) continue;
+        const marker = element("span", "terrain-marker", String(point.index + 1));
+        marker.title = `${point.label} · ${point.latitude}, ${point.longitude}`;
+        marker.setAttribute("role", "img");
+        marker.setAttribute("aria-label", `${point.index + 1}. ${point.label}, ${point.latitude}, ${point.longitude}`);
+        marker.style.left = `${screenX}px`;
+        marker.style.top = `${screenY}px`;
+        markerLayer.append(marker);
+      }
+    }
+
+    const changeZoom = (nextZoom, anchorX = mapViewport.clientWidth / 2, anchorY = mapViewport.clientHeight / 2) => {
+      const clampedZoom = Math.max(minZoom, Math.min(maxZoom, nextZoom));
+      if (clampedZoom === zoom) return;
+      const scale = 2 ** (clampedZoom - zoom);
+      const anchor = { x: origin.x + anchorX, y: origin.y + anchorY };
+      zoom = clampedZoom;
+      origin = {
+        x: anchor.x * scale - anchorX,
+        y: clampOriginY(anchor.y * scale - anchorY),
+      };
+      renderMap();
+    };
+    zoomOut.addEventListener("click", () => changeZoom(zoom - 1));
+    zoomIn.addEventListener("click", () => changeZoom(zoom + 1));
+    fit.addEventListener("click", fitPoints);
+    mapViewport.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest(".terrain-marker, a")) return;
+      dragging = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, originX: origin.x, originY: origin.y };
+      mapViewport.setPointerCapture(event.pointerId);
+      mapViewport.classList.add("is-dragging");
+    });
+    mapViewport.addEventListener("pointermove", (event) => {
+      if (!dragging || event.pointerId !== dragging.pointerId) return;
+      origin.x = dragging.originX - (event.clientX - dragging.x);
+      origin.y = clampOriginY(dragging.originY - (event.clientY - dragging.y));
+      scheduleRender();
+    });
+    const finishDrag = (event) => {
+      if (!dragging || event.pointerId !== dragging.pointerId) return;
+      dragging = null;
+      mapViewport.classList.remove("is-dragging");
+      scheduleRender();
+    };
+    mapViewport.addEventListener("pointerup", finishDrag);
+    mapViewport.addEventListener("pointercancel", finishDrag);
+    mapViewport.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const bounds = mapViewport.getBoundingClientRect();
+      changeZoom(zoom + (event.deltaY < 0 ? 1 : -1), event.clientX - bounds.left, event.clientY - bounds.top);
+    }, { passive: false });
+    if ("ResizeObserver" in window) new ResizeObserver(fitPoints).observe(mapViewport);
+    requestAnimationFrame(fitPoints);
   } else {
     map.append(element("div", "map-unavailable", "Les résultats contiennent des lieux, mais aucune coordonnée géographique exploitable pour les positionner sur la carte."));
   }
@@ -657,6 +830,9 @@ function renderResultMap(results) {
   }
   if (locations.length > 8) placeList.append(element("li", "map-place-overflow", `+ ${locations.length - 8} autres lieux dans les résultats`));
   map.append(placeList);
+  if (points.length) {
+    map.append(element("p", "map-caption", "Le fond topographique et le relief sont fournis par OpenTopoMap (données OpenStreetMap et SRTM). Le fournisseur des tuiles reçoit les zones de carte chargées."));
+  }
   slot.append(map);
 }
 
@@ -1294,13 +1470,8 @@ document.querySelectorAll("[data-view]").forEach((button) => {
 document.querySelectorAll("[data-go]").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.go));
 });
-document.querySelector("#sidebar-toggle").addEventListener("click", (event) => {
-  const button = event.currentTarget;
-  const collapsed = document.body.classList.toggle("sidebar-collapsed");
-  const label = collapsed ? "Afficher la barre latérale" : "Masquer la barre latérale";
-  button.setAttribute("aria-expanded", String(!collapsed));
-  button.setAttribute("aria-label", label);
-  button.title = label;
+sidebarToggle.addEventListener("click", () => {
+  setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
 });
 
 document.querySelector("#auth-tab-login").addEventListener("click", () => setAuthMode("login"));

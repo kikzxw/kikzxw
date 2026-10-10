@@ -165,6 +165,7 @@ test("adds security and cache headers to static assets and keeps unknown API rou
   };
   const page = await worker.fetch(new Request("https://redtrace.test/"), env);
   assert.equal(page.headers.get("Content-Security-Policy")?.includes("frame-ancestors 'none'"), true);
+  assert.equal(page.headers.get("Content-Security-Policy")?.includes("https://*.tile.opentopomap.org"), true);
   assert.equal(page.headers.get("X-Frame-Options"), "DENY");
   assert.equal(page.headers.get("Referrer-Policy"), "no-referrer");
   assert.equal(page.headers.get("X-Content-Type-Options"), "nosniff");
