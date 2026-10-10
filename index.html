@@ -20,6 +20,9 @@
           <span class="brand-mark">K<span>.</span></span>
           <span class="brand-copy">KIKZXW<small>INTELLIGENCE OSINT</small></span>
         </a>
+        <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Réduire la barre latérale" aria-controls="app-sidebar" aria-expanded="true" title="Réduire la barre latérale">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M14 9l-2 3 2 3"/></svg>
+        </button>
         <div class="workspace-label">WORKSPACE</div>
         <nav class="side-nav" aria-label="Navigation principale">
           <button class="nav-item active" data-view="overview" aria-label="Tableau de bord" aria-current="page" title="Tableau de bord"><span class="nav-icon" aria-hidden="true">▦</span><span>Tableau de bord</span></button>
@@ -28,7 +31,7 @@
           <button class="nav-item hidden" id="nav-admin" data-view="admin" aria-label="Administration" title="Gestion des comptes"><span class="nav-icon" aria-hidden="true">⚙</span><span>Administration</span></button>
         </nav>
         <div class="sidebar-bottom">
-          <div class="local-card"><span class="status-dot"></span><div><strong>Recherche multicritère</strong><small>Requêtes relayées · rien n'est stocké</small></div></div>
+          <div class="local-card"><span class="status-dot"></span><div><strong>Recherche multicritère</strong><small>Résultats non archivés automatiquement</small></div></div>
           <div class="sidebar-foot">KIKZXW <span>v1.0</span></div>
         </div>
       </aside>
@@ -37,9 +40,6 @@
         <header class="topbar">
           <div class="breadcrumbs"><span>WORKSPACE</span><b>/</b><strong id="breadcrumb-current">Tableau de bord</strong></div>
           <div class="topbar-right">
-            <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Masquer la barre latérale" aria-controls="app-sidebar" aria-expanded="true" title="Masquer la barre latérale">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M14 9l-2 3 2 3"/></svg>
-            </button>
             <span class="api-status"><i></i> Console active</span>
             <span class="top-divider"></span>
             <span class="user-chip hidden" id="user-chip" title="Session connectée">
@@ -96,6 +96,17 @@
               <div id="overview-activity" class="activity-list"></div>
             </section>
           </div>
+          <div class="dashboard-widgets">
+            <section class="panel matrix-panel" aria-labelledby="matrix-title">
+              <div class="panel-heading"><div><span class="section-kicker">FLUX SYSTÈME</span><h2 id="matrix-title">Matrix</h2></div><span class="panel-count">EN DIRECT</span></div>
+              <div class="matrix-screen"><canvas id="matrix-canvas" aria-hidden="true"></canvas><span class="matrix-overlay">FLUX LOCAL <i class="status-dot"></i></span></div>
+            </section>
+            <section class="panel peaclock-panel" aria-labelledby="peaclock-title">
+              <div class="panel-heading"><div><span class="section-kicker">HORLOGE LOCALE</span><h2 id="peaclock-title">Peaclock</h2></div><span class="panel-count">SYSTÈME</span></div>
+              <div class="peaclock-display"><time id="peaclock-time" aria-label="Heure locale">--:--:--</time><div id="peaclock-date" class="peaclock-date">Chargement…</div></div>
+              <div class="peaclock-footer"><span><i class="status-dot"></i> HORLOGE EN DIRECT</span><button id="peaclock-format" class="text-button" type="button" aria-pressed="false">24 H</button></div>
+            </section>
+          </div>
           <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Historique éphémère, supprimé au rechargement de l'onglet</span></footer>
         </section>
 
@@ -114,7 +125,7 @@
               <div class="form-divider"></div>
               <div class="form-actions">
                 <div class="form-actions-info">
-                  <span class="form-footnote"><i class="status-dot"></i> Requêtes relayées par le serveur · aucune donnée stockée</span>
+                  <span class="form-footnote"><i class="status-dot"></i> Requêtes relayées · résultats non archivés automatiquement</span>
                   <label class="field-check flexible-toggle" title="Élargit les correspondances en tolérant les variantes"><input type="checkbox" name="flexible"><span>Recherche approximative</span></label>
                   <button class="text-button save-search" type="button" id="save-search" title="Enregistrer les critères pour réutilisation rapide">☆ Enregistrer</button>
                 </div>
@@ -146,7 +157,7 @@
             </div>
             <div id="saved-list" class="saved-list"></div>
           </section>
-          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Requêtes relayées par le serveur · aucune donnée stockée</span></footer>
+          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Historique local à l’onglet · enregistrement explicite des critères</span></footer>
         </section>
 
         <section class="view" id="view-history">
@@ -182,11 +193,11 @@
           <span class="brand-mark">K<span>.</span></span>
           <div><strong id="auth-title">KIKZXW</strong><small>RECHERCHE OSINT · ACCÈS COMPTES</small></div>
         </div>
-        <div class="auth-tabs" role="tablist">
-          <button class="auth-tab active" id="auth-tab-login" type="button" role="tab" aria-selected="true">Connexion</button>
-          <button class="auth-tab" id="auth-tab-register" type="button" role="tab" aria-selected="false">Créer un compte</button>
+        <div class="auth-tabs" role="tablist" aria-label="Mode d’authentification">
+          <button class="auth-tab active" id="auth-tab-login" type="button" role="tab" aria-selected="true" aria-controls="auth-form" tabindex="0">Connexion</button>
+          <button class="auth-tab" id="auth-tab-register" type="button" role="tab" aria-selected="false" aria-controls="auth-form" tabindex="-1">Créer un compte</button>
         </div>
-        <form id="auth-form" class="auth-form">
+        <form id="auth-form" class="auth-form" role="tabpanel" aria-labelledby="auth-tab-login" tabindex="0">
           <label class="field"><span>NOM D'UTILISATEUR</span><input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Ex. analyste" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9._\-]{3,24}"></label>
           <label class="field"><span>MOT DE PASSE</span><span class="auth-password-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="8 caractères minimum" required minlength="8" maxlength="200"><button class="auth-reveal" id="auth-reveal" type="button" aria-label="Afficher le mot de passe">○</button></span></label>
           <div id="auth-error" class="result-error hidden" role="alert"></div>

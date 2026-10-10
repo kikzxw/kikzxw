@@ -12,12 +12,21 @@ const MIN_PASSWORD_LENGTH = 8;
 const ROLES = new Set(["admin", "membre"]);
 
 function loadJson(file, fallback) {
+  let content;
   try {
-    const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    return data ?? fallback;
-  } catch {
-    return fallback;
+    content = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return fallback;
+    throw error;
   }
+  let data;
+  try {
+    data = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Le fichier de données ${file} est invalide; il a été conservé.`, { cause: error });
+  }
+  if (!Array.isArray(data)) throw new Error(`Le fichier de données ${file} doit contenir un tableau.`);
+  return data;
 }
 
 function persistJson(file, data) {

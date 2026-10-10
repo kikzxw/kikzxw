@@ -16,7 +16,7 @@ let authMode = "login";
 
 function setSidebarCollapsed(collapsed, persist = true) {
   document.body.classList.toggle("sidebar-collapsed", collapsed);
-  const label = collapsed ? "Afficher la barre latérale" : "Masquer la barre latérale";
+  const label = collapsed ? "Déployer la barre latérale" : "Réduire la barre latérale";
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   sidebarToggle.setAttribute("aria-label", label);
   sidebarToggle.title = label;
@@ -679,6 +679,10 @@ function renderResultMap(results) {
   plot.append(countryLayer, markerLayer);
   svg.append(plot);
   mapViewport.append(svg);
+  const selectionBox = element("div", "map-selection-box");
+  selectionBox.hidden = true;
+  selectionBox.setAttribute("aria-hidden", "true");
+  mapViewport.append(selectionBox);
   const mapStatus = element("div", "terrain-map-status", "Dessin des frontières des pays…");
   mapStatus.setAttribute("role", "status");
   mapViewport.append(mapStatus);
@@ -769,7 +773,8 @@ function renderResultMap(results) {
     const marker = document.createElementNS("http://www.w3.org/2000/svg", "g");
     marker.classList.add("world-marker");
     marker.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)})`);
-    marker.setAttribute("role", "img");
+    marker.setAttribute("role", "button");
+    marker.setAttribute("tabindex", "0");
     marker.setAttribute("aria-label", `${point.index + 1}. ${point.label}, ${point.latitude}, ${point.longitude}`);
     const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
     title.textContent = `${point.label} · ${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
@@ -791,7 +796,8 @@ function renderResultMap(results) {
   let zoom = 1;
   let translateX = 0;
   let translateY = 0;
-  let dragging = null;
+  let gesture = null;
+  let holdTimer = null;
   const renderTransform = () => {
     plot.setAttribute("transform", `translate(${translateX.toFixed(2)} ${translateY.toFixed(2)}) scale(${zoom.toFixed(3)})`);
     for (const { marker } of markerNodes) {
@@ -824,37 +830,114 @@ function renderResultMap(results) {
     translateY = 250 - centerY * zoom;
     renderTransform();
   };
-  const changeZoom = (factor) => {
+  const changeZoom = (factor, focusX = 500, focusY = 250) => {
     const next = Math.max(1, Math.min(8, zoom * factor));
     const scale = next / zoom;
-    translateX = 500 - (500 - translateX) * scale;
-    translateY = 250 - (250 - translateY) * scale;
+    translateX = focusX - (focusX - translateX) * scale;
+    translateY = focusY - (focusY - translateY) * scale;
     zoom = next;
     renderTransform();
   };
+  const screenToMap = (clientX, clientY) => {
+    const point = svg.createSVGPoint();
+    point.x = clientX;
+    point.y = clientY;
+    const matrix = svg.getScreenCTM();
+    if (matrix) {
+      const result = point.matrixTransform(matrix.inverse());
+      return { x: (result.x - translateX) / zoom, y: (result.y - translateY) / zoom };
+    }
+    const bounds = mapViewport.getBoundingClientRect();
+    return {
+      x: ((clientX - bounds.left) / bounds.width * 1000 - translateX) / zoom,
+      y: ((clientY - bounds.top) / bounds.height * 500 - translateY) / zoom,
+    };
+  };
+  const updateSelectionBox = (clientX, clientY) => {
+    const bounds = mapViewport.getBoundingClientRect();
+    const left = Math.min(gesture.startClientX, clientX) - bounds.left;
+    const top = Math.min(gesture.startClientY, clientY) - bounds.top;
+    selectionBox.style.left = `${left}px`;
+    selectionBox.style.top = `${top}px`;
+    selectionBox.style.width = `${Math.abs(clientX - gesture.startClientX)}px`;
+    selectionBox.style.height = `${Math.abs(clientY - gesture.startClientY)}px`;
+  };
+  const zoomToMarker = ({ x, y }) => changeZoom(1.7, translateX + zoom * x, translateY + zoom * y);
+  for (const entry of markerNodes) {
+    entry.marker.addEventListener("click", () => zoomToMarker(entry));
+    entry.marker.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      zoomToMarker(entry);
+    });
+  }
   zoomOut.addEventListener("click", () => changeZoom(1 / 1.35));
   zoomIn.addEventListener("click", () => changeZoom(1.35));
   fit.addEventListener("click", fitPoints);
   mapViewport.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".world-marker")) return;
-    dragging = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, translateX, translateY };
+    if (event.button !== 0 || event.target.closest(".world-marker, .map-control")) return;
+    const startMap = screenToMap(event.clientX, event.clientY);
+    gesture = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startMap,
+      startTranslateX: translateX,
+      startTranslateY: translateY,
+      mode: "pending",
+    };
     mapViewport.setPointerCapture(event.pointerId);
-    mapViewport.classList.add("is-dragging");
+    holdTimer = window.setTimeout(() => {
+      if (!gesture || gesture.pointerId !== event.pointerId || gesture.mode !== "pending") return;
+      gesture.mode = "select";
+      mapViewport.classList.add("is-selecting");
+      mapStatus.textContent = "Zone activée — faites glisser pour cadrer la carte.";
+      mapStatus.hidden = false;
+    }, 2000);
   });
   mapViewport.addEventListener("pointermove", (event) => {
-    if (!dragging || event.pointerId !== dragging.pointerId) return;
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    if (gesture.mode === "pending" && Math.hypot(event.clientX - gesture.startClientX, event.clientY - gesture.startClientY) > 7) {
+      gesture.mode = "pan";
+      window.clearTimeout(holdTimer);
+      mapViewport.classList.add("is-dragging");
+    }
+    if (gesture.mode === "pending") return;
+    if (gesture.mode === "select") {
+      updateSelectionBox(event.clientX, event.clientY);
+      return;
+    }
     const bounds = mapViewport.getBoundingClientRect();
-    translateX = dragging.translateX + (event.clientX - dragging.x) * 1000 / bounds.width;
-    translateY = dragging.translateY + (event.clientY - dragging.y) * 500 / bounds.height;
+    translateX = gesture.startTranslateX + (event.clientX - gesture.startClientX) * 1000 / bounds.width;
+    translateY = gesture.startTranslateY + (event.clientY - gesture.startClientY) * 500 / bounds.height;
     renderTransform();
   });
   const finishDrag = (event) => {
-    if (!dragging || event.pointerId !== dragging.pointerId) return;
-    dragging = null;
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    window.clearTimeout(holdTimer);
+    if (gesture.mode === "select") {
+      const endMap = screenToMap(event.clientX, event.clientY);
+      const spanX = Math.abs(endMap.x - gesture.startMap.x);
+      const spanY = Math.abs(endMap.y - gesture.startMap.y);
+      if (spanX > 12 && spanY > 12) {
+        const nextZoom = Math.min(8, Math.min(1000 / spanX, 500 / spanY) * 0.9);
+        const centerX = (endMap.x + gesture.startMap.x) / 2;
+        const centerY = (endMap.y + gesture.startMap.y) / 2;
+        zoom = Math.max(zoom, nextZoom);
+        translateX = 500 - centerX * zoom;
+        translateY = 250 - centerY * zoom;
+        renderTransform();
+      }
+    }
+    gesture = null;
+    selectionBox.hidden = true;
+    mapStatus.hidden = true;
     mapViewport.classList.remove("is-dragging");
+    mapViewport.classList.remove("is-selecting");
   };
   mapViewport.addEventListener("pointerup", finishDrag);
   mapViewport.addEventListener("pointercancel", finishDrag);
+  mapViewport.addEventListener("contextmenu", (event) => event.preventDefault());
   mapViewport.addEventListener("wheel", (event) => {
     event.preventDefault();
     changeZoom(event.deltaY < 0 ? 1.12 : 1 / 1.12);
@@ -1424,6 +1507,9 @@ function setAuthMode(mode) {
   registerTab.classList.toggle("active", mode === "register");
   loginTab.setAttribute("aria-selected", mode === "login");
   registerTab.setAttribute("aria-selected", mode === "register");
+  loginTab.tabIndex = mode === "login" ? 0 : -1;
+  registerTab.tabIndex = mode === "register" ? 0 : -1;
+  document.querySelector("#auth-form").setAttribute("aria-labelledby", mode === "login" ? loginTab.id : registerTab.id);
   document.querySelector("#auth-submit .button-label").textContent = mode === "login" ? "Se connecter" : "Créer le compte";
   document.querySelector("#auth-password").autocomplete = mode === "login" ? "current-password" : "new-password";
   document.querySelector("#auth-error").classList.add("hidden");
@@ -1533,6 +1619,17 @@ sidebarToggle.addEventListener("click", () => {
 
 document.querySelector("#auth-tab-login").addEventListener("click", () => setAuthMode("login"));
 document.querySelector("#auth-tab-register").addEventListener("click", () => setAuthMode("register"));
+document.querySelector(".auth-tabs").addEventListener("keydown", (event) => {
+  const nextMode = event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "End"
+    ? "register"
+    : event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "Home"
+      ? "login"
+      : null;
+  if (!nextMode) return;
+  event.preventDefault();
+  setAuthMode(nextMode);
+  document.querySelector(nextMode === "login" ? "#auth-tab-login" : "#auth-tab-register").focus();
+});
 document.querySelector("#auth-reveal").addEventListener("click", (event) => {
   const button = event.currentTarget;
   const password = document.querySelector("#auth-password");
@@ -1619,3 +1716,83 @@ document.querySelector("#search-form").addEventListener("reset", () => {
 });
 updateSearchControls();
 renderActivity();
+
+const clockTime = document.querySelector("#peaclock-time");
+const clockDate = document.querySelector("#peaclock-date");
+const clockFormatButton = document.querySelector("#peaclock-format");
+let clock24Hour = true;
+const updatePeaclock = () => {
+  const now = new Date();
+  clockTime.dateTime = now.toISOString();
+  clockTime.textContent = new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: !clock24Hour,
+  }).format(now);
+  clockDate.textContent = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  }).format(now);
+};
+clockFormatButton.addEventListener("click", () => {
+  clock24Hour = !clock24Hour;
+  clockFormatButton.textContent = clock24Hour ? "24 H" : "12 H";
+  clockFormatButton.setAttribute("aria-pressed", String(!clock24Hour));
+  updatePeaclock();
+});
+updatePeaclock();
+window.setInterval(updatePeaclock, 1000);
+
+const matrixCanvas = document.querySelector("#matrix-canvas");
+const matrixContext = matrixCanvas.getContext("2d");
+const matrixScreen = matrixCanvas.parentElement;
+const matrixCharacters = "01アイウエオカキクケコサシスセソタチツテトナニヌネノ";
+let matrixColumns = [];
+let matrixFrame = 0;
+let matrixVisible = true;
+const resizeMatrix = () => {
+  const bounds = matrixScreen.getBoundingClientRect();
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  matrixCanvas.width = Math.max(1, Math.floor(bounds.width * ratio));
+  matrixCanvas.height = Math.max(1, Math.floor(bounds.height * ratio));
+  matrixContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+  matrixColumns = Array.from({ length: Math.ceil(bounds.width / 15) }, () => Math.random() * -24);
+};
+const drawMatrix = () => {
+  if (!matrixVisible || document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    matrixFrame = 0;
+    return;
+  }
+  const width = matrixScreen.clientWidth;
+  const height = matrixScreen.clientHeight;
+  matrixContext.fillStyle = "rgba(4, 12, 7, .12)";
+  matrixContext.fillRect(0, 0, width, height);
+  matrixContext.font = "12px monospace";
+  matrixContext.fillStyle = "#63d888";
+  matrixColumns.forEach((row, index) => {
+    const char = matrixCharacters[Math.floor(Math.random() * matrixCharacters.length)];
+    matrixContext.fillText(char, index * 15, row * 15);
+    if (row * 15 > height && Math.random() > .975) matrixColumns[index] = -2;
+    else matrixColumns[index] += .48;
+  });
+  matrixFrame = window.setTimeout(drawMatrix, 70);
+};
+const startMatrix = () => {
+  if (matrixFrame || !matrixVisible || document.hidden) return;
+  matrixFrame = window.setTimeout(drawMatrix, 30);
+};
+resizeMatrix();
+startMatrix();
+if ("ResizeObserver" in window) new ResizeObserver(() => resizeMatrix()).observe(matrixScreen);
+if ("IntersectionObserver" in window) {
+  new IntersectionObserver(([entry]) => {
+    matrixVisible = entry.isIntersecting;
+    if (!matrixVisible) {
+      window.clearTimeout(matrixFrame);
+      matrixFrame = 0;
+    } else startMatrix();
+  }).observe(matrixScreen);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    window.clearTimeout(matrixFrame);
+    matrixFrame = 0;
+  } else startMatrix();
+});

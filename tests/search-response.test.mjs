@@ -171,7 +171,7 @@ test("adds security and cache headers to static assets and keeps unknown API rou
   assert.equal(page.headers.get("X-Content-Type-Options"), "nosniff");
   assert.equal(page.headers.get("Cache-Control"), "no-cache");
 
-  const unknownApi = await worker.fetch(new Request("https://redtrace.test/api/admin/stats"), env);
+  const unknownApi = await worker.fetch(new Request("https://redtrace.test/api/not-a-real-route"), env);
   assert.equal(unknownApi.status, 404);
   assert.equal(assetFetches, 1);
 });

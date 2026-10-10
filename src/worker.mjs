@@ -177,23 +177,178 @@ export class AuthStore {
           attempts INTEGER NOT NULL
         )`,
       );
+      sql.exec(
+        `CREATE TABLE IF NOT EXISTS saved_searches (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          label TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )`,
+      );
     });
   }
 
   async fetch(request) {
     await this.ready;
-    const { pathname } = new URL(request.url);
-    if (pathname === "/api/auth/register" && request.method === "POST") {
-      const limited = await this.checkRateLimit(request, "register", 10);
-      return limited || this.register(request);
+    try {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/api/auth/register" && request.method === "POST") {
+        const limited = await this.checkRateLimit(request, "register", 10);
+        return limited || this.register(request);
+      }
+      if (pathname === "/api/auth/login" && request.method === "POST") {
+        const limited = await this.checkRateLimit(request, "login", 15);
+        return limited || this.login(request);
+      }
+      if (pathname === "/api/auth/me" && request.method === "GET") return this.currentUser(request);
+      if (pathname === "/api/auth/logout" && request.method === "POST") return this.logout(request);
+      if (pathname === "/api/auth/search-count" && request.method === "POST") return this.incrementSearchCount(request);
+      if (pathname === "/api/admin/stats" && request.method === "GET") return this.adminStats(request);
+      if (pathname === "/api/admin/users") return this.adminUsers(request);
+      const userMatch = /^\/api\/admin\/users\/([0-9a-f-]{36})$/i.exec(pathname);
+      if (userMatch) return this.adminUser(request, userMatch[1]);
+      if (pathname === "/api/saved") {
+        if (request.method === "POST") {
+          const limited = await this.checkRateLimit(request, "saved", 30);
+          if (limited) return limited;
+        }
+        return this.saved(request);
+      }
+      const savedMatch = /^\/api\/saved\/([0-9a-f-]{36})$/i.exec(pathname);
+      if (savedMatch) return this.removeSaved(request, savedMatch[1]);
+      return authJson(404, { error: "Endpoint d'authentification inconnu." });
+    } catch (error) {
+      return authJson(error.status || 500, { error: error.status ? error.message : "Une erreur interne est survenue." });
     }
-    if (pathname === "/api/auth/login" && request.method === "POST") {
-      const limited = await this.checkRateLimit(request, "login", 15);
-      return limited || this.login(request);
+  }
+
+  async sessionUser(request) {
+    const token = sessionFromRequest(request);
+    if (!token) return null;
+    const digest = await hashSession(token);
+    const row = this.ctx.storage.sql.exec(
+      `SELECT users.id, users.username, users.role, users.created_at, users.search_count
+       FROM sessions JOIN users ON users.id = sessions.user_id
+       WHERE sessions.token_hash = ? AND sessions.expires_at > ?`,
+      digest,
+      Date.now(),
+    ).toArray()[0];
+    if (row) this.ctx.storage.sql.exec(
+      "UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
+      Date.now() + SESSION_TTL_MS,
+      digest,
+    );
+    return row ? {
+      id: row.id,
+      username: displayUsername(row.username),
+      role: row.role,
+      createdAt: row.created_at,
+      searchCount: row.search_count,
+    } : null;
+  }
+
+  async authorizedUser(request, admin = false) {
+    const user = await this.sessionUser(request);
+    if (!user) return { response: authJson(401, { error: "Authentification requise." }) };
+    if (admin && user.role !== "admin") return { response: authJson(403, { error: "Réservé aux administrateurs." }) };
+    return { user };
+  }
+
+  async adminStats(request) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    const stats = this.ctx.storage.sql.exec(
+      `SELECT COUNT(*) AS users,
+       SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS admins,
+       SUM(CASE WHEN role = 'membre' THEN 1 ELSE 0 END) AS membres,
+       COALESCE(SUM(search_count), 0) AS searches FROM users`,
+    ).one();
+    const savedSearches = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM saved_searches").one().count;
+    const sessions = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?", Date.now()).one().count;
+    return authJson(200, { ...stats, savedSearches, sessions });
+  }
+
+  async adminUsers(request) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    if (request.method !== "GET") return authJson(405, { error: "Méthode non autorisée." });
+    const rows = this.ctx.storage.sql.exec(
+      "SELECT id, username, role, created_at, search_count FROM users ORDER BY created_at DESC",
+    ).toArray();
+    return authJson(200, { users: rows.map((row) => ({
+      id: row.id,
+      username: displayUsername(row.username),
+      role: row.role,
+      createdAt: row.created_at,
+      searchCount: row.search_count,
+    })) });
+  }
+
+  async adminUser(request, targetId) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    if (request.method === "PATCH") {
+      const body = await this.readBody(request);
+      if (!["admin", "membre"].includes(body.role)) return authJson(400, { error: "Rôle inconnu (attendu : admin ou membre)." });
+      const target = this.ctx.storage.sql.exec("SELECT id, username, role, created_at, search_count FROM users WHERE id = ?", targetId).toArray()[0];
+      if (!target) return authJson(404, { error: "Utilisateur introuvable." });
+      if (target.role === "admin" && body.role !== "admin") {
+        const admins = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").one().count;
+        if (admins <= 1) return authJson(400, { error: "Impossible de rétrograder le dernier administrateur." });
+      }
+      this.ctx.storage.sql.exec("UPDATE users SET role = ? WHERE id = ?", body.role, targetId);
+      return authJson(200, { user: { id: target.id, username: displayUsername(target.username), role: body.role, createdAt: target.created_at, searchCount: target.search_count } });
     }
-    if (pathname === "/api/auth/me" && request.method === "GET") return this.currentUser(request);
-    if (pathname === "/api/auth/logout" && request.method === "POST") return this.logout(request);
-    return authJson(404, { error: "Endpoint d'authentification inconnu." });
+    if (request.method === "DELETE") {
+      if (targetId === access.user.id) return authJson(400, { error: "Vous ne pouvez pas supprimer votre propre compte." });
+      const target = this.ctx.storage.sql.exec("SELECT id, username, role FROM users WHERE id = ?", targetId).toArray()[0];
+      if (!target) return authJson(404, { error: "Utilisateur introuvable." });
+      if (target.role === "admin" && this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").one().count <= 1) {
+        return authJson(400, { error: "Impossible de supprimer le dernier administrateur." });
+      }
+      this.ctx.storage.sql.exec("DELETE FROM saved_searches WHERE user_id = ?", targetId);
+      this.ctx.storage.sql.exec("DELETE FROM sessions WHERE user_id = ?", targetId);
+      this.ctx.storage.sql.exec("DELETE FROM users WHERE id = ?", targetId);
+      return authJson(200, { user: { id: target.id, username: displayUsername(target.username), role: target.role } });
+    }
+    return authJson(405, { error: "Méthode non autorisée." });
+  }
+
+  async saved(request) {
+    const access = await this.authorizedUser(request);
+    if (access.response) return access.response;
+    if (request.method === "GET") {
+      const rows = this.ctx.storage.sql.exec("SELECT id, user_id, label, payload, created_at FROM saved_searches WHERE user_id = ? ORDER BY created_at DESC", access.user.id).toArray();
+      return authJson(200, { saved: rows.map((row) => ({ id: row.id, userId: row.user_id, label: row.label, payload: JSON.parse(row.payload), createdAt: row.created_at })) });
+    }
+    if (request.method !== "POST") return authJson(405, { error: "Méthode non autorisée." });
+    const body = await this.readBody(request);
+    const label = typeof body.label === "string" ? body.label.trim().slice(0, 80) : "";
+    if (!label) return authJson(400, { error: "Le nom de la recherche enregistrée est requis." });
+    if (!body.payload || typeof body.payload !== "object" || Array.isArray(body.payload)) return authJson(400, { error: "Les critères de la recherche sont invalides." });
+    const count = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM saved_searches WHERE user_id = ?", access.user.id).one().count;
+    if (count >= 50) return authJson(400, { error: "Limite de 50 recherches enregistrées atteinte." });
+    const entry = { id: crypto.randomUUID(), userId: access.user.id, label, payload: body.payload, createdAt: new Date().toISOString() };
+    this.ctx.storage.sql.exec("INSERT INTO saved_searches (id, user_id, label, payload, created_at) VALUES (?, ?, ?, ?, ?)", entry.id, entry.userId, entry.label, JSON.stringify(entry.payload), entry.createdAt);
+    return authJson(201, { saved: entry });
+  }
+
+  async removeSaved(request, id) {
+    const access = await this.authorizedUser(request);
+    if (access.response) return access.response;
+    if (request.method !== "DELETE") return authJson(405, { error: "Méthode non autorisée." });
+    const existing = this.ctx.storage.sql.exec("SELECT id FROM saved_searches WHERE id = ? AND user_id = ?", id, access.user.id).toArray()[0];
+    if (!existing) return authJson(404, { error: "Recherche enregistrée introuvable." });
+    this.ctx.storage.sql.exec("DELETE FROM saved_searches WHERE id = ? AND user_id = ?", id, access.user.id);
+    return authJson(200, { ok: true });
+  }
+
+  async incrementSearchCount(request) {
+    const user = await this.sessionUser(request);
+    if (!user) return authJson(401, { error: "Session inactive ou expirée." });
+    this.ctx.storage.sql.exec("UPDATE users SET search_count = search_count + 1 WHERE id = ?", user.id);
+    return authJson(200, { ok: true });
   }
 
   async checkRateLimit(request, action, limit) {
@@ -460,7 +615,7 @@ function buildQuery(body) {
   return query;
 }
 
-async function handleSearch(request) {
+async function handleSearch(request, env) {
   let body;
   try {
     const text = await request.text();
@@ -490,6 +645,13 @@ async function handleSearch(request) {
       signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     });
     const payload = await parseSearchResponse(upstream);
+    if (upstream.status >= 200 && upstream.status < 300) {
+      const cookie = request.headers.get("Cookie");
+      await handleAuth(new Request(new URL("/api/auth/search-count", request.url), {
+        method: "POST",
+        headers: cookie ? { Cookie: cookie } : undefined,
+      }), env);
+    }
     return jsonResponse(upstream.status, payload);
   } catch (error) {
     if (error.name === "TimeoutError" || error.name === "AbortError") {
@@ -534,8 +696,9 @@ async function applySearchLimit(request, env) {
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
-    if (pathname.startsWith("/api/auth/")) {
-      if (!["GET", "POST"].includes(request.method)) {
+    if (pathname === "/api/auth/search-count") return jsonResponse(404, { error: "Endpoint inconnu." });
+    if (pathname.startsWith("/api/auth/") || pathname.startsWith("/api/admin/") || pathname === "/api/saved" || pathname.startsWith("/api/saved/")) {
+      if (!["GET", "POST", "PATCH", "DELETE"].includes(request.method)) {
         return jsonResponse(405, { error: "Méthode non autorisée." });
       }
       return secureResponse(await handleAuth(request, env), "no-store");
@@ -548,7 +711,7 @@ export default {
       if (sessionError) return secureResponse(sessionError, "no-store");
       const rateLimitError = await applySearchLimit(request, env);
       if (rateLimitError) return rateLimitError;
-      return handleSearch(request);
+      return handleSearch(request, env);
     }
     if (pathname.startsWith("/api/")) return jsonResponse(404, { error: "Endpoint inconnu." });
     const response = await env.ASSETS.fetch(request);
