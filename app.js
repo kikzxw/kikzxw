@@ -18,7 +18,226 @@ let currentResults = null;
 let savedSearches = [];
 let authMode = "login";
 
-function setSidebarCollapsed(collapsed, persist = true) {
+/* ---------- 3D Effects & Mouse Tracking ---------- */
+let mouseX = 0.5;
+let mouseY = 0.5;
+let scrollY = 0;
+let rafId = null;
+let reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function init3DEffects() {
+  if (reducedMotion) return;
+
+  // CSS custom properties for mouse position
+  const root = document.documentElement;
+  
+  // Mouse move tracking
+  document.addEventListener("mousemove", (e) => {
+    mouseX = e.clientX / window.innerWidth;
+    mouseY = e.clientY / window.innerHeight;
+    root.style.setProperty("--mouse-x", `${mouseX * 100}%`);
+    root.style.setProperty("--mouse-y", `${mouseY * 100}%`);
+  });
+
+  // Scroll tracking
+  let ticking = false;
+  window.addEventListener("scroll", () => {
+    scrollY = window.scrollY;
+    root.style.setProperty("--scroll-y", scrollY);
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(() => {
+        updateScrollProgress();
+        updateParallax();
+        updateScrollReveal();
+        ticking = false;
+      });
+    }
+  }, { passive: true });
+
+  // Scroll progress bar
+  const progressBar = document.createElement("div");
+  progressBar.className = "scroll-progress";
+  document.body.appendChild(progressBar);
+
+  // Cursor spotlight
+  const spotlight = document.createElement("div");
+  spotlight.className = "cursor-spotlight";
+  document.body.appendChild(spotlight);
+  let spotlightX = 0, spotlightY = 0;
+  let targetSpotlightX = 0, targetSpotlightY = 0;
+  
+  document.addEventListener("mousemove", (e) => {
+    targetSpotlightX = e.clientX;
+    targetSpotlightY = e.clientY;
+    spotlight.classList.add("active");
+  });
+  
+  document.addEventListener("mouseleave", () => {
+    spotlight.classList.remove("active");
+  });
+
+  function animateSpotlight() {
+    spotlightX += (targetSpotlightX - spotlightX) * 0.15;
+    spotlightY += (targetSpotlightY - spotlightY) * 0.15;
+    spotlight.style.transform = `translate(${spotlightX}px, ${spotlightY}px) translate(-50%, -50%)`;
+    rafId = requestAnimationFrame(animateSpotlight);
+  }
+  animateSpotlight();
+
+  // Tilt effect for .tilt-3d elements
+  document.querySelectorAll(".tilt-3d").forEach((el) => {
+    el.addEventListener("mousemove", (e) => handleTilt(e, el));
+    el.addEventListener("mouseleave", () => resetTilt(el));
+  });
+
+  // Magnetic buttons
+  document.querySelectorAll(".magnetic").forEach((btn) => {
+    btn.addEventListener("mousemove", (e) => handleMagnetic(e, btn));
+    btn.addEventListener("mouseleave", () => resetMagnetic(btn));
+  });
+
+  // Add liquid blobs to hero sections
+  addLiquidBlobs();
+
+  // Add noise texture to panels
+  addNoiseTextures();
+
+  // Initialize scroll reveal observer
+  initScrollReveal();
+}
+
+function updateScrollProgress() {
+  const progressBar = document.querySelector(".scroll-progress");
+  if (!progressBar) return;
+  const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+  const progress = scrollHeight > 0 ? scrollY / scrollHeight : 0;
+  progressBar.style.transform = `scaleX(${progress})`;
+}
+
+function updateParallax() {
+  document.querySelectorAll(".parallax-layer").forEach((layer) => {
+    const depth = parseFloat(layer.dataset.depth) || 1;
+    const speed = depth * 0.1;
+    const y = scrollY * speed;
+    layer.style.transform = `translate3d(0, ${y}px, 0)`;
+  });
+
+  // Hero parallax
+  document.querySelectorAll(".welcome-hero, .page-intro").forEach((hero) => {
+    const rect = hero.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+    const offset = (window.innerHeight / 2 - rect.top) * 0.15;
+    hero.style.setProperty("--parallax-offset", `${offset}px`);
+  });
+}
+
+function handleTilt(e, el) {
+  const rect = el.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const deltaX = (e.clientX - centerX) / (rect.width / 2);
+  const deltaY = (e.clientY - centerY) / (rect.height / 2);
+  const maxTilt = 8;
+  const tiltX = Math.max(-maxTilt, Math.max(maxTilt, deltaY * maxTilt));
+  const tiltY = Math.max(-maxTilt, Math.max(maxTilt, -deltaX * maxTilt));
+  el.style.setProperty("--tilt-x", `${tiltY}deg`);
+  el.style.setProperty("--tilt-y", `${tiltX}deg`);
+}
+
+function resetTilt(el) {
+  el.style.setProperty("--tilt-x", "0deg");
+  el.style.setProperty("--tilt-y", "0deg");
+}
+
+function handleMagnetic(e, btn) {
+  const rect = btn.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const deltaX = (e.clientX - centerX) * 0.3;
+  const deltaY = (e.clientY - centerY) * 0.3;
+  btn.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(1.02)`;
+}
+
+function resetMagnetic(btn) {
+  btn.style.transform = "translate(0, 0) scale(1)";
+}
+
+function addLiquidBlobs() {
+  const heroSections = document.querySelectorAll(".welcome-hero, .page-intro");
+  heroSections.forEach((section, i) => {
+    if (section.querySelector(".liquid-blob")) return;
+    const blob = document.createElement("div");
+    blob.className = "liquid-blob";
+    blob.style.cssText = `
+      width: ${300 + i * 50}px;
+      height: ${300 + i * 50}px;
+      top: ${20 + i * 10}%;
+      left: ${i % 2 === 0 ? "10%" : "80%"};
+      background: ${i % 2 === 0 ? "radial-gradient(circle, var(--accent), var(--accent-deep))" : "radial-gradient(circle, var(--accent-deep), var(--accent))"};
+      animation-delay: ${i * 2}s;
+    `;
+    section.style.position = "relative";
+    section.insertBefore(blob, section.firstChild);
+  });
+}
+
+function addNoiseTextures() {
+  document.querySelectorAll(".panel, .stat-card, .search-result-card, .settings-panel").forEach((el) => {
+    if (!el.classList.contains("grain-texture")) {
+      el.classList.add("grain-texture");
+    }
+  });
+}
+
+function initScrollReveal() {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add("visible");
+        // Stagger children
+        const children = entry.target.querySelectorAll(".scroll-reveal-3d");
+        children.forEach((child, i) => {
+          child.style.transitionDelay = `${i * 80}ms`;
+        });
+      }
+    });
+  }, { threshold: 0.1, rootMargin: "50px" });
+
+  document.querySelectorAll(".panel, .stat-card, .search-result-card, .settings-panel, .welcome-hero, .page-intro").forEach((el) => {
+    if (!el.classList.contains("scroll-reveal-3d")) {
+      el.classList.add("scroll-reveal-3d");
+    }
+    observer.observe(el);
+  });
+}
+
+function addDepthToCards() {
+  document.querySelectorAll(".search-result-card, .activity-item, .saved-item, .stat-card").forEach((card, i) => {
+    card.classList.add("depth-shadow");
+    card.style.transitionDelay = `${i * 30}ms`;
+  });
+}
+
+// Initialize on DOM ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init3DEffects);
+} else {
+  init3DEffects();
+}
+
+// Re-initialize on view change
+const originalShowView = showView;
+showView = function(name) {
+  originalShowView(name);
+  setTimeout(() => {
+    addDepthToCards();
+    document.querySelectorAll(".panel, .stat-card, .search-result-card, .settings-panel").forEach((el) => {
+      if (!el.classList.contains("grain-texture")) el.classList.add("grain-texture");
+      if (!el.classList.contains("scroll-reveal-3d")) el.classList.add("scroll-reveal-3d");
+    });
+  }, 100);
+};
   document.body.classList.toggle("sidebar-collapsed", collapsed);
   const label = collapsed ? "Déployer la barre latérale" : "Réduire la barre latérale";
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
