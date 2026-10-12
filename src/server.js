@@ -55,13 +55,18 @@ const SECURITY_HEADERS = {
 };
 
 function sendJson(response, statusCode, payload, extraHeaders) {
+  const body = JSON.stringify(payload);
   response.writeHead(statusCode, {
     "Content-Type": MIME_TYPES[".json"],
     "Cache-Control": "no-store",
     ...SECURITY_HEADERS,
     ...(extraHeaders || {}),
   });
-  response.end(JSON.stringify(payload));
+  response.end(body, (error) => {
+    if (error && error.code !== "ERR_HTTP_HEADERS_SENT") {
+      console.error(`sendJson write error (${statusCode}):`, error.code || error.message);
+    }
+  });
 }
 
 function sendText(response, statusCode, text) {
@@ -207,13 +212,7 @@ function buildSearchQuery(body) {
   return query;
 }
 
-async function handleSearch(request, response) {
-  const session = readSession(request);
-  if (!session) {
-    sendJson(response, 401, { error: "Connexion requise pour effectuer une recherche." });
-    return;
-  }
-  const userId = session.user.id;
+async function handleSearch(request, response, userId) {
   try {
     const body = await readJsonBody(request, MAX_SEARCH_SIZE);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -255,6 +254,8 @@ function readSession(request) {
   return store.getSession(match[1]);
 }
 
+const useTls = Boolean(TLS_CERT_PATH && TLS_KEY_PATH);
+
 function secureRequest(request) {
   if (useTls) return true;
   if (!TRUST_PROXY) return false;
@@ -291,7 +292,7 @@ async function readAuthBody(request) {
 
 async function handleRegister(request, response) {
   if (isRateLimited(request, 10, "register")) {
-    sendJson(response, 429, { error: "Trop de tentatives de création de compte. Réessayez dans une minute." });
+    sendJson(response, 429, { error: "Trop de tentatives de création de compte. Réessayez dans une minute." }, { "Retry-After": "60" });
     return;
   }
   let body;
@@ -317,7 +318,7 @@ async function handleRegister(request, response) {
 
 async function handleLogin(request, response) {
   if (isRateLimited(request, 15, "login")) {
-    sendJson(response, 429, { error: "Trop de tentatives de connexion. Réessayez dans une minute." });
+    sendJson(response, 429, { error: "Trop de tentatives de connexion. Réessayez dans une minute." }, { "Retry-After": "60" });
     return;
   }
   let body;
@@ -374,8 +375,14 @@ async function handleAdminUsers(request, response, pathname) {
   try {
     if (request.method === "PATCH") {
       const body = await readAuthBody(request);
-      const user = store.setRole(session.user, targetId, body.role);
-      sendJson(response, 200, { user });
+      // Support both role change and password reset in a single PATCH.
+      if (body.password !== undefined) {
+        const user = store.resetPassword(targetId, body.password);
+        sendJson(response, 200, { user });
+      } else {
+        const user = store.setRole(session.user, targetId, body.role);
+        sendJson(response, 200, { user });
+      }
       return;
     }
     if (request.method === "DELETE") {
@@ -402,7 +409,7 @@ function handleAdminStats(request, response) {
   sendJson(response, 200, store.stats());
 }
 
-async function handleUserProfile(request, response) {
+async function handleUserProfile(request, response, pathname) {
   const session = readSession(request);
   if (!session) {
     sendJson(response, 401, { error: "Authentification requise." });
@@ -546,7 +553,7 @@ function handleRequest(request, response) {
   } else if (request.method === "GET" && pathname === "/api/auth/me") {
     handleMe(request, response);
   } else if (pathname.startsWith("/api/user/")) {
-    handleUserProfile(request, response);
+    handleUserProfile(request, response, pathname);
   } else if (pathname === "/api/admin/stats") {
     if (request.method !== "GET") sendJson(response, 405, { error: "Méthode non autorisée." });
     else handleAdminStats(request, response);
@@ -555,13 +562,13 @@ function handleRequest(request, response) {
   } else if (pathname === "/api/saved" || pathname.startsWith("/api/saved/")) {
     handleSaved(request, response, pathname);
   } else if (request.method === "POST" && pathname === "/api/search") {
-    if (!readSession(request)) {
+    const session = readSession(request);
+    if (!session) {
       sendJson(response, 401, { error: "Connexion requise pour effectuer une recherche." });
     } else if (isRateLimited(request, RATE_LIMIT_SEARCH, "search")) {
       sendJson(response, 429, { error: "Trop de requêtes. Réessayez dans une minute." }, { "Retry-After": "60" });
-      return;
     } else {
-      handleSearch(request, response);
+      handleSearch(request, response, session.user.id);
     }
   } else if (request.method === "GET") {
     serveStatic(request, response);
@@ -576,7 +583,6 @@ const server = http.createServer(handleRequest);
 server.requestTimeout = 30_000;
 server.headersTimeout = 10_000;
 
-const useTls = Boolean(TLS_CERT_PATH && TLS_KEY_PATH);
 let publicServer = server;
 if (useTls) {
   try {

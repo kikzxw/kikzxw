@@ -283,7 +283,6 @@ function purgeExpiredSessions() {
   }
   if (changed) persistSessions();
 }
-
 function listSaved(userId) {
   return savedSearches
     .filter((entry) => entry.userId === userId)
@@ -349,6 +348,28 @@ function changePassword(userId, currentPassword, newPassword) {
   return publicUser(user);
 }
 
+// Admin-only: resets a user's password without requiring their current password.
+function resetPassword(targetId, newPassword) {
+  const user = findUserById(targetId);
+  if (!user) throw authError(404, "Utilisateur introuvable.");
+  if (typeof newPassword !== "string" || newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw authError(400, `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+  }
+  if (newPassword.length > 200) {
+    throw authError(400, "Le mot de passe est trop long (200 caractères maximum).");
+  }
+  const { salt, hash } = hashPassword(newPassword);
+  user.salt = salt;
+  user.hash = hash;
+  // Invalidate all existing sessions for this user after a password reset.
+  for (const [token, session] of sessions) {
+    if (session.userId === targetId) sessions.delete(token);
+  }
+  persistSessions();
+  persistJson(USERS_FILE, users);
+  return publicUser(user);
+}
+
 function deleteOwnAccount(userId) {
   const user = findUserById(userId);
   if (!user) throw authError(404, "Utilisateur introuvable.");
@@ -364,6 +385,21 @@ function deleteOwnAccount(userId) {
 }
 
 setInterval(purgeExpiredSessions, 30 * 60 * 1000).unref();
+
+// #10 — load-time integrity check: warn about users whose stored hash has an unexpected length.
+// scrypt(64 bytes) → 128 hex chars. An odd-length or wrong-length hash would make timingSafeEqual
+// always return false, locking that user out silently.
+(function checkHashIntegrity() {
+  const EXPECTED_HASH_HEX_LENGTH = 128; // 64 bytes × 2
+  for (const user of users) {
+    if (typeof user.hash !== "string" || user.hash.length !== EXPECTED_HASH_HEX_LENGTH) {
+      console.warn(
+        `store: utilisateur '${user.username}' (id=${user.id}) a un hash de longueur ${user.hash?.length ?? "indéfinie"} (attendu ${EXPECTED_HASH_HEX_LENGTH}). ` +
+        `Ce compte ne peut pas s'authentifier. Réinitialisez son mot de passe via l'API d'administration ou recréez le compte.`,
+      );
+    }
+  }
+}());
 
 module.exports = {
   ROLES,
@@ -385,5 +421,6 @@ module.exports = {
   removeSaved,
   updateUserProfile,
   changePassword,
+  resetPassword,
   deleteOwnAccount,
 };
