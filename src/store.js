@@ -320,6 +320,49 @@ function removeSaved(userId, id) {
   return entry;
 }
 
+function updateUserProfile(userId, { email, lang, timezone, datefmt }) {
+  const user = findUserById(userId);
+  if (!user) throw authError(404, "Utilisateur introuvable.");
+  if (email !== undefined) {
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw authError(400, "Email invalide.");
+    }
+    user.email = email || null;
+  }
+  if (lang !== undefined) user.lang = lang;
+  if (timezone !== undefined) user.timezone = timezone;
+  if (datefmt !== undefined) user.datefmt = datefmt;
+  persistJson(USERS_FILE, users);
+  return publicUser(user);
+}
+
+function changePassword(userId, currentPassword, newPassword) {
+  const user = findUserById(userId);
+  if (!user) throw authError(404, "Utilisateur introuvable.");
+  if (!verifyPassword(currentPassword, user.salt, user.hash)) {
+    throw authError(401, "Mot de passe actuel incorrect.");
+  }
+  const { salt, hash } = hashPassword(newPassword);
+  user.salt = salt;
+  user.hash = hash;
+  persistJson(USERS_FILE, users);
+  return publicUser(user);
+}
+
+function deleteOwnAccount(userId) {
+  const user = findUserById(userId);
+  if (!user) throw authError(404, "Utilisateur introuvable.");
+  users = users.filter((u) => u.id !== userId);
+  savedSearches = savedSearches.filter((entry) => entry.userId !== userId);
+  for (const [token, session] of sessions) {
+    if (session.userId === userId) sessions.delete(token);
+  }
+  persistSessions();
+  persistJson(USERS_FILE, users);
+  persistJson(SAVED_FILE, savedSearches);
+  return publicUser(user);
+}
+
 setInterval(purgeExpiredSessions, 30 * 60 * 1000).unref();
 
 module.exports = {
@@ -340,4 +383,7 @@ module.exports = {
   listSaved,
   addSaved,
   removeSaved,
+  updateUserProfile,
+  changePassword,
+  deleteOwnAccount,
 };

@@ -402,6 +402,54 @@ function handleAdminStats(request, response) {
   sendJson(response, 200, store.stats());
 }
 
+async function handleUserProfile(request, response) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Authentification requise." });
+    return;
+  }
+  if (request.method === "PATCH" && pathname === "/api/user/profile") {
+    try {
+      const body = await readAuthBody(request);
+      const { email, lang, timezone, datefmt } = body;
+      const user = store.updateUserProfile(session.user.id, { email, lang, timezone, datefmt });
+      sendJson(response, 200, { user });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+  if (request.method === "PATCH" && pathname === "/api/user/password") {
+    try {
+      const body = await readAuthBody(request);
+      const { currentPassword, newPassword } = body;
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+        throw Object.assign(new Error("Champs requis manquants."), { status: 400 });
+      }
+      if (newPassword.length < 8) {
+        throw Object.assign(new Error("Le nouveau mot de passe doit contenir au moins 8 caractères."), { status: 400 });
+      }
+      const user = store.changePassword(session.user.id, currentPassword, newPassword);
+      sendJson(response, 200, { user });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+  if (request.method === "DELETE" && pathname === "/api/user/account") {
+    try {
+      store.deleteOwnAccount(session.user.id);
+      const clearedCookie = clearedSessionCookie(request);
+      response.setHeader("Set-Cookie", clearedCookie);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+  sendJson(response, 405, { error: "Méthode non autorisée." });
+}
+
 async function handleSaved(request, response, pathname) {
   const session = readSession(request);
   if (!session) {
@@ -497,6 +545,8 @@ function handleRequest(request, response) {
     handleLogout(request, response);
   } else if (request.method === "GET" && pathname === "/api/auth/me") {
     handleMe(request, response);
+  } else if (pathname.startsWith("/api/user/")) {
+    handleUserProfile(request, response);
   } else if (pathname === "/api/admin/stats") {
     if (request.method !== "GET") sendJson(response, 405, { error: "Méthode non autorisée." });
     else handleAdminStats(request, response);

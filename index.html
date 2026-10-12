@@ -28,6 +28,7 @@
           <button class="nav-item active" data-view="overview" aria-label="Tableau de bord" aria-current="page" title="Tableau de bord"><span class="nav-icon" aria-hidden="true">▦</span><span>Tableau de bord</span></button>
           <button class="nav-item" data-view="search" aria-label="Recherche" title="Recherche"><span class="nav-icon nav-icon-loupe" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span><span>Recherche</span></button>
           <button class="nav-item" data-view="history" aria-label="Historique" title="Historique de recherche"><span class="nav-icon" aria-hidden="true">◷</span><span>Historique</span></button>
+          <button class="nav-item" data-view="settings" aria-label="Paramètres" title="Paramètres"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span>Paramètres</span></button>
           <button class="nav-item hidden" id="nav-admin" data-view="admin" aria-label="Administration" title="Gestion des comptes"><span class="nav-icon" aria-hidden="true">⚙</span><span>Administration</span></button>
         </nav>
         <div class="sidebar-bottom">
@@ -180,6 +181,222 @@
           <div class="page-intro"><div class="eyebrow">JOURNAL ÉPHÉMÈRE</div><h1>Historique de recherche<span class="red-dot">.</span></h1><p class="subheading">Recherches réalisées dans l'onglet actuel uniquement.</p></div>
           <section class="panel history-panel"><div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Recherches effectuées</h2></div><span class="panel-count" id="history-count">00 ENTRÉE</span></div><div id="history-list" class="activity-list"></div></section>
           <footer class="page-footer"><span>KIKZXW · OSINT</span><span>L'historique est supprimé au rechargement de l'onglet</span></footer>
+        </section>
+        <section class="view" id="view-settings">
+          <div class="page-intro"><div class="eyebrow">CONFIGURATION</div><h1>Paramètres<span class="red-dot">.</span></h1><p class="subheading">Personnalisez votre expérience et gérez votre compte.</p></div>
+          
+          <section class="panel settings-panel" id="settings-profile">
+            <div class="panel-heading"><div><span class="section-kicker">PROFIL</span><h2>Informations du compte</h2></div></div>
+            <form id="profile-form" class="settings-form">
+              <div class="profile-avatar-section">
+                <div class="profile-avatar-large" id="profile-avatar-large">?</div>
+                <button type="button" class="text-button" id="change-avatar">Changer l'avatar</button>
+              </div>
+              <div class="form-row">
+                <label class="field"><span>NOM D'UTILISATEUR</span><input id="profile-username" name="username" type="text" autocomplete="username" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9._\-]{3,24}" disabled></label>
+                <label class="field"><span>RÔLE</span><input id="profile-role" type="text" disabled></label>
+              </div>
+              <div class="form-row">
+                <label class="field"><span>EMAIL</span><input id="profile-email" name="email" type="email" autocomplete="email" placeholder="optionnel"></label>
+                <label class="field"><span>LANGUE</span><select id="profile-lang" name="lang"><option value="fr">Français</option><option value="en">English</option></select></label>
+              </div>
+              <div class="form-row">
+                <label class="field"><span>FUSEAU HORAIRE</span><select id="profile-tz" name="timezone"></select></label>
+                <label class="field"><span>FORMAT DE DATE</span><select id="profile-datefmt" name="datefmt"><option value="fr-FR">JJ/MM/AAAA</option><option value="ISO">AAAA-MM-JJ</option><option value="US">MM/JJ/AAAA</option></select></label>
+              </div>
+              <div id="profile-error" class="result-error hidden" role="alert"></div>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit" id="profile-save"><span class="button-label">Enregistrer</span><span>→</span></button>
+              </div>
+            </form>
+            <div class="form-divider"></div>
+            <form id="password-form" class="settings-form">
+              <h3 style="margin: 0 0 16px; font-size: 13px; font-weight: 600;">Changer le mot de passe</h3>
+              <label class="field"><span>MOT DE PASSE ACTUEL</span><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required minlength="8"></label>
+              <label class="field"><span>NOUVEAU MOT DE PASSE</span><input id="new-password" name="newPassword" type="password" autocomplete="new-password" required minlength="8" maxlength="200"></label>
+              <label class="field"><span>CONFIRMER</span><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8"></label>
+              <div id="password-error" class="result-error hidden" role="alert"></div>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit" id="password-save"><span class="button-label">Mettre à jour</span><span>→</span></button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel settings-panel" id="settings-preferences">
+            <div class="panel-heading"><div><span class="section-kicker">PRÉFÉRENCES</span><h2>Interface et comportement</h2></div></div>
+            <div class="settings-grid">
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Barre latérale réduite au démarrage</strong>
+                  <small>Démarrer avec la sidebar repliée</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-sidebar-collapsed"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Animations réduites</strong>
+                  <small>Désactiver les transitions et effets visuels</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-reduced-motion"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Thème sombre forcé</strong>
+                  <small>Ignorer la préférence système</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-force-dark"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Grille compacte</strong>
+                  <small>Réduire l'espacement des panneaux</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-compact-grid"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Son des notifications</strong>
+                  <small>Jouer un son pour les toasts</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-toast-sound"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Sauvegarde auto. des critères</strong>
+                  <small>Conserver les derniers critères saisis</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-auto-save-search"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Résultats par page</strong>
+                  <small>Nombre d'entrées affichées</small>
+                </div>
+                <select id="pref-results-per-page" class="setting-select"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Délai de recherche (ms)</strong>
+                  <small>Debounce avant envoi au serveur</small>
+                </div>
+                <input type="number" id="pref-search-debounce" class="setting-input" min="0" max="2000" step="50" value="300">
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-panel" id="settings-search">
+            <div class="panel-heading"><div><span class="section-kicker">RECHERCHE</span><h2>Comportement par défaut</h2></div></div>
+            <div class="settings-grid">
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Recherche approximative</strong>
+                  <small>Activer par défaut la correspondance floue</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-flexible-default"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Inclure les métadonnées</strong>
+                  <small>Afficher les champs techniques (_source, _score...)</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-include-meta"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Tri par défaut</strong>
+                  <small>Ordre des résultats</small>
+                </div>
+                <select id="pref-sort-default" class="setting-select"><option value="relevance">Pertinence</option><option value="date_desc">Plus récent</option><option value="date_asc">Plus ancien</option><option value="alpha">Alphabétique</option></select>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Carte auto.</strong>
+                  <small>Afficher la carte si des coordonnées trouvées</small>
+                </div>
+                <label class="toggle"><input type="checkbox" id="pref-auto-map"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Export par défaut</strong>
+                  <small>Format d'export privilégié</small>
+                </div>
+                <select id="pref-export-default" class="setting-select"><option value="json">JSON</option><option value="csv">CSV</option></select>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-panel" id="settings-data">
+            <div class="panel-heading"><div><span class="section-kicker">DONNÉES</span><h2>Gestion des données locales</h2></div></div>
+            <div class="settings-grid">
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Effacer l'historique</strong>
+                  <small>Supprimer toutes les recherches de cette session</small>
+                </div>
+                <button class="button button-secondary" type="button" id="clear-history">Effacer</button>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Effacer les recherches sauvegardées</strong>
+                  <small>Supprimer tous les raccourcis enregistrés</small>
+                </div>
+                <button class="button button-secondary" type="button" id="clear-saved">Effacer</button>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Exporter mes données</strong>
+                  <small>Télécharger l'historique et préférences (JSON)</small>
+                </div>
+                <button class="button button-secondary" type="button" id="export-data">Exporter</button>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <strong>Importer des données</strong>
+                  <small>Restaurer depuis un fichier JSON</small>
+                </div>
+                <label class="field" style="max-width: 200px;"><span>FICHIER</span><input type="file" id="import-data" accept=".json" style="height: 38px; padding: 0;"></label>
+              </div>
+              <div class="setting-item danger-zone">
+                <div class="setting-info">
+                  <strong>Zone de danger</strong>
+                  <small>Actions irréversibles</small>
+                </div>
+                <button class="button" type="button" id="delete-account" style="border-color: #7a2935; background: #230e12; color: #ff9aa4;">Supprimer mon compte</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-panel" id="settings-about">
+            <div class="panel-heading"><div><span class="section-kicker">À PROPOS</span><h2>Informations système</h2></div></div>
+            <div class="settings-grid">
+              <div class="setting-item info-item">
+                <div class="setting-info"><strong>Version</strong><small>KIKZXW v1.0</small></div>
+                <span class="info-value" id="sys-version">1.0.0</span>
+              </div>
+              <div class="setting-item info-item">
+                <div class="setting-info"><strong>Build</strong><small>Date de compilation</small></div>
+                <span class="info-value" id="sys-build">—</span>
+              </div>
+              <div class="setting-item info-item">
+                <div class="setting-info"><strong>Environnement</strong><small>Mode d'exécution</small></div>
+                <span class="info-value" id="sys-env">local</span>
+              </div>
+              <div class="setting-item info-item">
+                <div class="setting-info"><strong>User Agent</strong><small>Navigateur</small></div>
+                <span class="info-value" id="sys-ua" style="max-width: 300px; word-break: break-all;">—</span>
+              </div>
+              <div class="setting-item info-item">
+                <div class="setting-info"><strong>Stockage disponible</strong><small>Espace localStorage</small></div>
+                <span class="info-value" id="sys-storage">—</span>
+              </div>
+              <div class="setting-item info-item">
+                <div class="setting-info"><strong>Session</strong><small>État de la session</small></div>
+                <span class="info-value" id="sys-session">—</span>
+              </div>
+            </div>
+          </section>
+          
+          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Les préférences sont stockées localement dans le navigateur</span></footer>
         </section>
         <section class="view" id="view-admin">
           <div class="page-intro"><div class="eyebrow">GESTION</div><h1>Administration<span class="red-dot">.</span></h1><p class="subheading">Comptes, rôles et statistiques de la plateforme.</p></div>

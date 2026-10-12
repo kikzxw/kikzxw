@@ -1,4 +1,4 @@
-const views = ["overview", "search", "history", "admin"];
+const views = ["overview", "search", "history", "settings", "admin"];
 const sidebarToggle = document.querySelector("#sidebar-toggle");
 const sidebarPreferenceKey = "kikzxw.sidebar-collapsed";
 const userMenuTrigger = document.querySelector("#user-menu-trigger");
@@ -8,6 +8,7 @@ const viewTitles = {
   overview: "Tableau de bord",
   search: "Recherche",
   history: "Historique",
+  settings: "Paramètres",
   admin: "Administration",
 };
 const activity = [];
@@ -54,6 +55,7 @@ function showView(name) {
   });
   if (name === "history") renderActivity();
   if (name === "admin") loadAdminPanel();
+  if (name === "settings") loadSettings();
 }
 
 function element(tag, className, text) {
@@ -1725,6 +1727,261 @@ async function loadAdminPanel() {
   }
 }
 
+const SETTINGS_KEY = "kikzxw.settings";
+const defaultSettings = {
+  sidebarCollapsed: false,
+  reducedMotion: false,
+  forceDark: true,
+  compactGrid: false,
+  toastSound: false,
+  autoSaveSearch: true,
+  resultsPerPage: 25,
+  searchDebounce: 300,
+  flexibleDefault: false,
+  includeMeta: false,
+  sortDefault: "relevance",
+  autoMap: true,
+  exportDefault: "json",
+};
+
+function getSettings() {
+  try {
+    const stored = window.localStorage.getItem(SETTINGS_KEY);
+    return stored ? { ...defaultSettings, ...JSON.parse(stored) } : { ...defaultSettings };
+  } catch {
+    return { ...defaultSettings };
+  }
+}
+
+function saveSettings(settings) {
+  try {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignored
+  }
+}
+
+function applySettings(settings) {
+  document.body.classList.toggle("sidebar-collapsed", settings.sidebarCollapsed);
+  sidebarToggle.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
+  document.body.classList.toggle("reduced-motion", settings.reducedMotion);
+  document.body.classList.toggle("force-dark", settings.forceDark);
+  document.body.classList.toggle("compact-grid", settings.compactGrid);
+}
+
+function loadSettings() {
+  if (!currentUser) return;
+  const settings = getSettings();
+  applySettings(settings);
+
+  document.querySelector("#profile-username").value = currentUser.username;
+  document.querySelector("#profile-role").value = currentUser.role === "admin" ? "Administrateur" : "Membre";
+  document.querySelector("#profile-avatar-large").textContent = currentUser.username.slice(0, 2).toUpperCase();
+  document.querySelector("#profile-email").value = currentUser.email || "";
+  document.querySelector("#profile-lang").value = settings.lang || "fr";
+  document.querySelector("#profile-tz").value = settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  document.querySelector("#profile-datefmt").value = settings.datefmt || "fr-FR";
+
+  document.querySelector("#pref-sidebar-collapsed").checked = settings.sidebarCollapsed;
+  document.querySelector("#pref-reduced-motion").checked = settings.reducedMotion;
+  document.querySelector("#pref-force-dark").checked = settings.forceDark;
+  document.querySelector("#pref-compact-grid").checked = settings.compactGrid;
+  document.querySelector("#pref-toast-sound").checked = settings.toastSound;
+  document.querySelector("#pref-auto-save-search").checked = settings.autoSaveSearch;
+  document.querySelector("#pref-results-per-page").value = String(settings.resultsPerPage);
+  document.querySelector("#pref-search-debounce").value = String(settings.searchDebounce);
+  document.querySelector("#pref-flexible-default").checked = settings.flexibleDefault;
+  document.querySelector("#pref-include-meta").checked = settings.includeMeta;
+  document.querySelector("#pref-sort-default").value = settings.sortDefault;
+  document.querySelector("#pref-auto-map").checked = settings.autoMap;
+  document.querySelector("#pref-export-default").value = settings.exportDefault;
+
+  document.querySelector("#sys-version").textContent = "1.0.0";
+  document.querySelector("#sys-build").textContent = new Date().toISOString().split("T")[0];
+  document.querySelector("#sys-env").textContent = window.location.hostname === "localhost" ? "local" : "production";
+  document.querySelector("#sys-ua").textContent = navigator.userAgent;
+  document.querySelector("#sys-storage").textContent = `${(JSON.stringify(localStorage).length / 1024).toFixed(1)} KB`;
+  document.querySelector("#sys-session").textContent = currentUser ? "Active" : "Inactive";
+
+  const tzSelect = document.querySelector("#profile-tz");
+  if (tzSelect.options.length === 0) {
+    Intl.supportedValuesOf("timeZone").forEach((tz) => {
+      const opt = document.createElement("option");
+      opt.value = tz;
+      opt.textContent = tz;
+      tzSelect.append(opt);
+    });
+  }
+}
+
+async function saveProfile() {
+  const form = document.querySelector("#profile-form");
+  const errorBox = document.querySelector("#profile-error");
+  const submit = document.querySelector("#profile-save");
+  const label = submit.querySelector(".button-label");
+
+  const email = document.querySelector("#profile-email").value.trim();
+  const lang = document.querySelector("#profile-lang").value;
+  const timezone = document.querySelector("#profile-tz").value;
+  const datefmt = document.querySelector("#profile-datefmt").value;
+
+  submit.disabled = true;
+  label.textContent = "Enregistrement…";
+  errorBox.classList.add("hidden");
+
+  try {
+    const response = await apiRequest("/api/user/profile", {
+      method: "PATCH",
+      body: { email, lang, timezone, datefmt },
+    });
+    if (!response.ok) throw new Error(response.payload?.error || "Mise à jour impossible.");
+
+    currentUser = { ...currentUser, email };
+    applySession(currentUser);
+    showToast("Profil mis à jour.");
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    submit.disabled = false;
+    label.textContent = "Enregistrer";
+  }
+}
+
+async function changePassword() {
+  const form = document.querySelector("#password-form");
+  const errorBox = document.querySelector("#password-error");
+  const submit = document.querySelector("#password-save");
+  const label = submit.querySelector(".button-label");
+
+  const currentPassword = document.querySelector("#current-password").value;
+  const newPassword = document.querySelector("#new-password").value;
+  const confirmPassword = document.querySelector("#confirm-password").value;
+
+  if (newPassword !== confirmPassword) {
+    errorBox.textContent = "Les mots de passe ne correspondent pas.";
+    errorBox.classList.remove("hidden");
+    return;
+  }
+
+  submit.disabled = true;
+  label.textContent = "Mise à jour…";
+  errorBox.classList.add("hidden");
+
+  try {
+    const response = await apiRequest("/api/user/password", {
+      method: "PATCH",
+      body: { currentPassword, newPassword },
+    });
+    if (!response.ok) throw new Error(response.payload?.error || "Changement impossible.");
+
+    form.reset();
+    showToast("Mot de passe modifié.");
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    submit.disabled = false;
+    label.textContent = "Mettre à jour";
+  }
+}
+
+function saveAllPreferences() {
+  const settings = getSettings();
+  settings.sidebarCollapsed = document.querySelector("#pref-sidebar-collapsed").checked;
+  settings.reducedMotion = document.querySelector("#pref-reduced-motion").checked;
+  settings.forceDark = document.querySelector("#pref-force-dark").checked;
+  settings.compactGrid = document.querySelector("#pref-compact-grid").checked;
+  settings.toastSound = document.querySelector("#pref-toast-sound").checked;
+  settings.autoSaveSearch = document.querySelector("#pref-auto-save-search").checked;
+  settings.resultsPerPage = Number(document.querySelector("#pref-results-per-page").value);
+  settings.searchDebounce = Number(document.querySelector("#pref-search-debounce").value);
+  settings.flexibleDefault = document.querySelector("#pref-flexible-default").checked;
+  settings.includeMeta = document.querySelector("#pref-include-meta").checked;
+  settings.sortDefault = document.querySelector("#pref-sort-default").value;
+  settings.autoMap = document.querySelector("#pref-auto-map").checked;
+  settings.exportDefault = document.querySelector("#pref-export-default").value;
+  settings.lang = document.querySelector("#profile-lang").value;
+  settings.timezone = document.querySelector("#profile-tz").value;
+  settings.datefmt = document.querySelector("#profile-datefmt").value;
+
+  saveSettings(settings);
+  applySettings(settings);
+  showToast("Préférences enregistrées.");
+}
+
+function clearHistory() {
+  if (!window.confirm("Effacer tout l'historique de cette session ?")) return;
+  activity.length = 0;
+  renderActivity();
+  showToast("Historique effacé.");
+}
+
+function clearSaved() {
+  if (!window.confirm("Supprimer toutes les recherches sauvegardées ?")) return;
+  savedSearches = [];
+  renderSavedSearches();
+  showToast("Recherches sauvegardées effacées.");
+}
+
+function exportData() {
+  const data = {
+    settings: getSettings(),
+    activity,
+    savedSearches,
+    exportedAt: new Date().toISOString(),
+    version: "1.0",
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `kikzxw-backup-${new Date().toISOString().split("T")[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast("Données exportées.");
+}
+
+function importData(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (data.settings) {
+        saveSettings({ ...defaultSettings, ...data.settings });
+      }
+      if (Array.isArray(data.activity)) {
+        activity.push(...data.activity);
+      }
+      if (Array.isArray(data.savedSearches)) {
+        savedSearches.push(...data.savedSearches);
+      }
+      renderActivity();
+      renderSavedSearches();
+      loadSettings();
+      showToast("Données importées avec succès.");
+    } catch {
+      showToast("Fichier invalide.", "error");
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function deleteAccount() {
+  if (!window.confirm("⚠️ ATTENTION : Cette action est IRRÉVERSIBLE.\n\nVotre compte, toutes vos recherches sauvegardées et votre historique seront définitivement supprimés.\n\nConfirmez-vous la suppression ?")) return;
+  if (!window.confirm("Dernière confirmation : êtes-vous ABSOLUMENT sûr ?")) return;
+
+  try {
+    const response = await apiRequest("/api/user/account", { method: "DELETE" });
+    if (!response.ok) throw new Error(response.payload?.error || "Suppression impossible.");
+    applySession(null);
+    setAuthMode("login");
+    showToast("Compte supprimé.");
+  } catch (error) {
+    showToast(error.message || "Suppression impossible.", "error");
+  }
+}
+
 document.querySelectorAll("[data-view]").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.view));
 });
@@ -1838,6 +2095,23 @@ userMenuDropdown.addEventListener("keydown", (event) => {
 document.querySelector("#admin-refresh").addEventListener("click", loadAdminPanel);
 document.querySelector("#save-search").addEventListener("click", saveCurrentSearch);
 document.querySelector("#result-filter").addEventListener("input", applyResultFilter);
+
+document.querySelector("#profile-form").addEventListener("submit", (e) => { e.preventDefault(); saveProfile(); });
+document.querySelector("#password-form").addEventListener("submit", (e) => { e.preventDefault(); changePassword(); });
+
+document.querySelectorAll("#pref-sidebar-collapsed, #pref-reduced-motion, #pref-force-dark, #pref-compact-grid, #pref-toast-sound, #pref-auto-save-search, #pref-flexible-default, #pref-include-meta, #pref-auto-map").forEach((el) => {
+  el.addEventListener("change", saveAllPreferences);
+});
+document.querySelectorAll("#pref-results-per-page, #pref-search-debounce, #pref-sort-default, #pref-export-default, #profile-lang, #profile-tz, #profile-datefmt").forEach((el) => {
+  el.addEventListener("change", saveAllPreferences);
+});
+
+document.querySelector("#clear-history").addEventListener("click", clearHistory);
+document.querySelector("#clear-saved").addEventListener("click", clearSaved);
+document.querySelector("#export-data").addEventListener("click", exportData);
+document.querySelector("#import-data").addEventListener("change", (e) => { if (e.target.files[0]) importData(e.target.files[0]); });
+document.querySelector("#delete-account").addEventListener("click", deleteAccount);
+
 refreshSession();
 
 document.querySelector("#search-form").addEventListener("submit", (event) => {
@@ -1868,6 +2142,8 @@ document.querySelector("#search-form").addEventListener("reset", () => {
 });
 updateSearchControls();
 renderActivity();
+const initialSettings = getSettings();
+applySettings(initialSettings);
 
 const clockTime = document.querySelector("#peaclock-time");
 const clockDate = document.querySelector("#peaclock-date");
