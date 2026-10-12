@@ -18,6 +18,21 @@ let currentResults = null;
 let savedSearches = [];
 let authMode = "login";
 
+function setSidebarCollapsed(collapsed, persist = true) {
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  const label = collapsed ? "Déployer la barre latérale" : "Réduire la barre latérale";
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  sidebarToggle.setAttribute("aria-label", label);
+  sidebarToggle.title = label;
+  if (persist) {
+    try {
+      window.localStorage.setItem(sidebarPreferenceKey, String(collapsed));
+    } catch {
+      // La préférence reste appliquée dans l'onglet si le stockage est indisponible.
+    }
+  }
+}
+
 /* ---------- 3D Effects & Mouse Tracking ---------- */
 let mouseX = 0.5;
 let mouseY = 0.5;
@@ -238,19 +253,6 @@ showView = function(name) {
     });
   }, 100);
 };
-  document.body.classList.toggle("sidebar-collapsed", collapsed);
-  const label = collapsed ? "Déployer la barre latérale" : "Réduire la barre latérale";
-  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
-  sidebarToggle.setAttribute("aria-label", label);
-  sidebarToggle.title = label;
-  if (persist) {
-    try {
-      window.localStorage.setItem(sidebarPreferenceKey, String(collapsed));
-    } catch {
-      // La préférence reste appliquée dans l'onglet si le stockage est indisponible.
-    }
-  }
-}
 
 let sidebarInitiallyCollapsed = false;
 try {
