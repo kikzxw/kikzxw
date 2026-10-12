@@ -179,19 +179,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 
 .brand-mark {
-  flex: 0 0 36px;
+  flex: 0 0 32px;
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   place-items: center;
-  border: 1px solid var(--accent-deep);
-  border-radius: 9px;
-  background: linear-gradient(145deg, #18402e, #0f2a1e 70%);
-  color: #fff;
-  font: 800 20px/1 var(--display);
+  color: var(--accent-bright);
 }
-.brand-mark span { color: var(--accent-bright); }
-.brand-mark svg  { width: 18px; height: 18px; stroke: var(--accent-bright); }
+.brand-mark svg  { width: 22px; height: 22px; stroke: var(--accent-bright); }
 
 .brand-copy { font: 700 15px/1.15 var(--display); letter-spacing: -.3px; }
 .brand-copy small {
@@ -1545,7 +1540,7 @@ h3 { color: var(--text-dim); font: 600 13px/1.4 var(--display); }
 }
 
 .auth-brand { display: flex; align-items: center; gap: 11px; }
-.auth-brand .brand-mark { flex: 0 0 40px; width: 40px; height: 40px; }
+.auth-brand .brand-mark { flex: 0 0 36px; width: 36px; height: 36px; }
 .auth-brand strong { display: block; color: var(--text); font: 700 17px/1.15 var(--display); }
 .auth-brand small  { display: block; margin-top: 4px; color: var(--text-muted); font: 8px var(--mono); letter-spacing: .8px; }
 
@@ -1836,7 +1831,7 @@ h3 { color: var(--text-dim); font: 600 13px/1.4 var(--display); }
   .sidebar::after { display: none; }
 
   .brand { padding: 0; gap: 8px; flex: 0 0 auto; }
-  .brand-mark { width: 32px; height: 32px; font-size: 18px; }
+  .brand-mark { width: 28px; height: 28px; }
   .brand-copy { font-size: 14px; }
   .brand-copy small,
   .workspace-label,
