@@ -1,6 +1,9 @@
 const views = ["overview", "search", "history", "admin"];
 const sidebarToggle = document.querySelector("#sidebar-toggle");
 const sidebarPreferenceKey = "kikzxw.sidebar-collapsed";
+const userMenuTrigger = document.querySelector("#user-menu-trigger");
+const userMenuDropdown = document.querySelector("#user-menu-dropdown");
+const userMenu = document.querySelector("#user-menu");
 const viewTitles = {
   overview: "Tableau de bord",
   search: "Recherche",
@@ -1585,22 +1588,26 @@ async function apiRequest(path, { method = "GET", body } = {}) {
 
 function applySession(user) {
   currentUser = user;
-  const chip = document.querySelector("#user-chip");
   const overlay = document.querySelector("#auth-overlay");
   const navAdmin = document.querySelector("#nav-admin");
+  const userMenu = document.querySelector("#user-menu");
+  const avatar = document.querySelector("#user-menu-avatar");
+  const name = document.querySelector("#user-menu-name");
+  const dropdownAvatar = document.querySelector("#user-menu-dropdown-avatar");
+  const dropdownName = document.querySelector("#user-menu-dropdown-name");
+  const dropdownRole = document.querySelector("#user-menu-dropdown-role");
   if (user) {
-    chip.classList.remove("hidden");
-    document.querySelector("#logout-button").classList.remove("hidden");
-    document.querySelector("#user-name").textContent = user.username;
-    document.querySelector("#user-role").textContent = user.role === "admin" ? "ADMINISTRATEUR" : "MEMBRE";
-    document.querySelector("#user-role").classList.toggle("admin", user.role === "admin");
-    document.querySelector("#user-avatar").textContent = user.username.slice(0, 2).toUpperCase();
+    userMenu.classList.remove("hidden");
+    avatar.textContent = user.username.slice(0, 2).toUpperCase();
+    name.textContent = user.username;
+    dropdownAvatar.textContent = user.username.slice(0, 2).toUpperCase();
+    dropdownName.textContent = user.username;
+    dropdownRole.textContent = user.role === "admin" ? "ADMINISTRATEUR" : "MEMBRE";
     overlay.classList.add("hidden");
     navAdmin.classList.toggle("hidden", user.role !== "admin");
     loadSavedSearches();
   } else {
-    chip.classList.add("hidden");
-    document.querySelector("#logout-button").classList.add("hidden");
+    userMenu.classList.add("hidden");
     overlay.classList.remove("hidden");
     navAdmin.classList.add("hidden");
     savedSearches = [];
@@ -1785,8 +1792,8 @@ document.querySelector("#auth-form").addEventListener("submit", async (event) =>
     label.textContent = authMode === "login" ? "Se connecter" : "Créer le compte";
   }
 });
-document.querySelector("#logout-button").addEventListener("click", async () => {
-  const button = document.querySelector("#logout-button");
+document.querySelector("#menu-logout").addEventListener("click", async () => {
+  const button = document.querySelector("#menu-logout");
   button.disabled = true;
   try {
     const response = await apiRequest("/api/auth/logout", { method: "POST" });
@@ -1794,12 +1801,40 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
     applySession(null);
     setAuthMode("login");
     showToast("Vous êtes déconnecté.");
+    closeUserMenu();
   } catch (error) {
     showToast(error.message || "Impossible de fermer la session.", "error");
   } finally {
     button.disabled = false;
   }
 });
+
+function toggleUserMenu() {
+  const isOpen = userMenuDropdown.classList.toggle("hidden");
+  userMenuTrigger.setAttribute("aria-expanded", String(!isOpen));
+}
+
+function closeUserMenu() {
+  userMenuDropdown.classList.add("hidden");
+  userMenuTrigger.setAttribute("aria-expanded", "false");
+}
+
+userMenuTrigger.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleUserMenu();
+});
+
+document.addEventListener("click", (event) => {
+  if (!userMenu.contains(event.target)) closeUserMenu();
+});
+
+userMenuDropdown.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeUserMenu();
+    userMenuTrigger.focus();
+  }
+});
+
 document.querySelector("#admin-refresh").addEventListener("click", loadAdminPanel);
 document.querySelector("#save-search").addEventListener("click", saveCurrentSearch);
 document.querySelector("#result-filter").addEventListener("input", applyResultFilter);
