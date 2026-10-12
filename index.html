@@ -17,7 +17,9 @@
     <div class="app-shell">
       <aside class="sidebar" id="app-sidebar">
         <a class="brand" href="/" aria-label="KIKZXW, accueil">
-          <span class="brand-mark">K<span>.</span></span>
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M16 16 22 22"/><path d="M7 10h6M10 7v6"/></svg>
+          </span>
           <span class="brand-copy">KIKZXW<small>INTELLIGENCE OSINT</small></span>
         </a>
         <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Réduire la barre latérale" aria-controls="app-sidebar" aria-expanded="true" title="Réduire la barre latérale">
@@ -68,26 +70,26 @@
         </header>
 
         <section class="view active" id="view-overview">
-          <section class="welcome-hero scene-3d tilt-3d" aria-labelledby="welcome-title">
+          <section class="welcome-hero" aria-labelledby="welcome-title">
             <div class="mouse-glow"></div>
-            <div class="welcome-copy parallax-layer" data-depth="1">
+            <div class="welcome-copy" data-depth="1">
               <div class="eyebrow"><span class="live-pulse"></span> ESPACE D'ANALYSE PRIVÉ</div>
               <p class="hero-overline">VOTRE ESPACE DE RECHERCHE</p>
               <h1 id="welcome-title">KIKZXW<span class="hero-period">.</span></h1>
               <p class="hero-description">Chaque indice compte. Croisez les informations, explorez les correspondances et gardez le contrôle de vos recherches.</p>
               <div class="hero-actions">
-                <button class="button button-primary magnetic" type="button" data-go="search"><span class="button-label">Démarrer une recherche</span><span>↗</span></button>
-                <button class="button button-secondary magnetic" type="button" data-go="history">Voir l'activité <span>→</span></button>
+                <button class="button button-primary" type="button" data-go="search"><span class="button-label">Démarrer une recherche</span><span>↗</span></button>
+                <button class="button button-secondary" type="button" data-go="history">Voir l'activité <span>→</span></button>
               </div>
               <div class="hero-trust"><span><i class="status-dot"></i> Historique éphémère</span><span>Recherche multicritère</span></div>
             </div>
-            <div class="hero-art parallax-layer" data-depth="2" aria-hidden="true">
-              <div class="hero-art-glow float-3d"></div>
-              <div class="hero-orbit hero-orbit-outer float-3d" style="animation-delay: 1s;"></div>
-              <div class="hero-orbit hero-orbit-inner float-3d" style="animation-delay: 2s;"></div>
-              <div class="hero-crosshair hero-crosshair-one float-3d" style="animation-delay: 0.5s;"></div>
-              <div class="hero-crosshair hero-crosshair-two float-3d" style="animation-delay: 1.5s;"></div>
-              <div class="hero-signal float-3d" style="animation-delay: 0.8s;"><span></span><span></span><span></span></div>
+            <div class="hero-art" data-depth="2" aria-hidden="true">
+              <div class="hero-art-glow"></div>
+              <div class="hero-orbit hero-orbit-outer"></div>
+              <div class="hero-orbit hero-orbit-inner"></div>
+              <div class="hero-crosshair hero-crosshair-one"></div>
+              <div class="hero-crosshair hero-crosshair-two"></div>
+              <div class="hero-signal"><span></span><span></span><span></span></div>
               <div class="hero-art-caption"><span>01 / SIGNAL</span><strong>Explorer les connexions</strong></div>
               <svg class="hero-mark" viewBox="0 0 120 120" fill="none"><path d="M26 92V28h20l28 38V28h20v64H74L46 54v38H26Z" stroke="currentColor" stroke-width="2"/><circle cx="60" cy="60" r="52" stroke="currentColor" stroke-opacity=".2"/><circle cx="60" cy="60" r="39" stroke="currentColor" stroke-opacity=".14" stroke-dasharray="2 5"/></svg>
             </div>
@@ -105,12 +107,12 @@
           </div>
           <div class="overview-section-heading"><div><span class="section-kicker">VUE D'ENSEMBLE</span><h2>Votre activité</h2></div><span class="overview-private"><i class="status-dot"></i> Session privée</span></div>
           <div class="overview-metrics">
-            <article class="stat-card search-total-card tilt-3d magnetic">
+            <article class="stat-card search-total-card">
               <div class="stat-top"><span>RECHERCHES CETTE SESSION</span><span class="stat-icon red" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span></div>
               <div class="stat-value" id="stat-searches">00</div>
               <div class="stat-foot">Historique éphémère, conservé dans cet onglet uniquement.</div>
             </article>
-            <section class="panel search-chart-panel tilt-3d" aria-labelledby="search-chart-title">
+            <section class="panel search-chart-panel" aria-labelledby="search-chart-title">
               <div class="panel-heading">
                 <div><span class="section-kicker">ACTIVITÉ DE LA SESSION</span><h2 id="search-chart-title">Recherches effectuées</h2></div>
                 <span class="panel-count" id="search-chart-total" aria-live="polite">0 RECHERCHE</span>
@@ -129,8 +131,8 @@
         </section>
 
         <section class="view" id="view-search">
-          <div class="page-intro parallax-layer" data-depth="1"><div class="eyebrow"><span class="live-pulse"></span> RECHERCHE MULTICRITÈRE</div><h1>Recherche<span class="red-dot">.</span></h1><p class="subheading">Renseignez un ou plusieurs critères et consultez les résultats renvoyés par le serveur.</p></div>
-          <section class="panel search-panel tilt-3d">
+          <div class="page-intro" data-depth="1"><div class="eyebrow"><span class="live-pulse"></span> RECHERCHE MULTICRITÈRE</div><h1>Recherche<span class="red-dot">.</span></h1><p class="subheading">Renseignez un ou plusieurs critères et consultez les résultats renvoyés par le serveur.</p></div>
+          <section class="panel search-panel">
             <div class="panel-heading"><div><span class="section-kicker">CRITÈRES DE RECHERCHE</span><h2>Affinez votre recherche</h2></div><span class="panel-count">25 CRITÈRES DISPONIBLES</span></div>
             <div class="schema-note"><span>i</span><p>Renseignez au moins un critère : les champs vides ne sont jamais envoyés au serveur. La recherche est stricte par défaut — cochez « Recherche approximative » pour élargir les correspondances.</p></div>
             <form id="search-form">
@@ -149,12 +151,12 @@
                 </div>
                 <div class="form-actions-main">
                   <div id="search-pager" class="search-pager hidden" aria-label="Pagination des résultats"></div>
-                  <button class="button button-primary magnetic" type="submit" id="search-submit"><span class="button-label">Lancer la recherche</span><span>→</span></button>
+                  <button class="button button-primary" type="submit" id="search-submit"><span class="button-label">Lancer la recherche</span><span>→</span></button>
                 </div>
               </div>
             </form>
           </section>
-          <section class="panel result-panel tilt-3d hidden" id="search-result-panel">
+          <section class="panel result-panel hidden" id="search-result-panel">
             <div class="panel-heading"><div><span class="section-kicker">RÉSULTATS DE LA RECHERCHE</span><h2 id="search-result-title">Résultats de la recherche</h2></div><span class="result-status" id="search-result-status" role="status" aria-live="polite"></span></div>
             <div id="search-result-summary" class="result-summary"></div>
             <div class="result-toolbar" id="result-toolbar">
@@ -168,7 +170,7 @@
             <div class="result-map-slot" id="search-result-map"></div>
             <div class="result-sections" id="search-result-sections"></div>
           </section>
-          <section class="panel saved-panel tilt-3d" id="saved-panel">
+          <section class="panel saved-panel" id="saved-panel">
             <div class="panel-heading">
               <div><span class="section-kicker">RACCOURCIS</span><h2>Recherches enregistrées</h2></div>
               <span class="panel-count" id="saved-count">00 ENREGISTRÉE</span>
@@ -179,14 +181,14 @@
         </section>
 
         <section class="view" id="view-history">
-          <div class="page-intro parallax-layer" data-depth="1"><div class="eyebrow">JOURNAL ÉPHÉMÈRE</div><h1>Historique de recherche<span class="red-dot">.</span></h1><p class="subheading">Recherches réalisées dans l'onglet actuel uniquement.</p></div>
-          <section class="panel history-panel tilt-3d"><div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Recherches effectuées</h2></div><span class="panel-count" id="history-count">00 ENTRÉE</span></div><div id="history-list" class="activity-list"></div></section>
+          <div class="page-intro" data-depth="1"><div class="eyebrow">JOURNAL ÉPHÉMÈRE</div><h1>Historique de recherche<span class="red-dot">.</span></h1><p class="subheading">Recherches réalisées dans l'onglet actuel uniquement.</p></div>
+          <section class="panel history-panel"><div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Recherches effectuées</h2></div><span class="panel-count" id="history-count">00 ENTRÉE</span></div><div id="history-list" class="activity-list"></div></section>
           <footer class="page-footer"><span>KIKZXW · OSINT</span><span>L'historique est supprimé au rechargement de l'onglet</span></footer>
         </section>
         <section class="view" id="view-settings">
-          <div class="page-intro parallax-layer" data-depth="1"><div class="eyebrow">CONFIGURATION</div><h1>Paramètres<span class="red-dot">.</span></h1><p class="subheading">Personnalisez votre expérience et gérez votre compte.</p></div>
+          <div class="page-intro" data-depth="1"><div class="eyebrow">CONFIGURATION</div><h1>Paramètres<span class="red-dot">.</span></h1><p class="subheading">Personnalisez votre expérience et gérez votre compte.</p></div>
           
-          <section class="panel settings-panel tilt-3d" id="settings-profile">
+          <section class="panel settings-panel" id="settings-profile">
             <div class="panel-heading"><div><span class="section-kicker">PROFIL</span><h2>Informations du compte</h2></div></div>
             <form id="profile-form" class="settings-form">
               <div class="profile-avatar-section">
@@ -207,7 +209,7 @@
               </div>
               <div id="profile-error" class="result-error hidden" role="alert"></div>
               <div class="form-actions">
-                <button class="button button-primary magnetic" type="submit" id="profile-save"><span class="button-label">Enregistrer</span><span>→</span></button>
+                <button class="button button-primary" type="submit" id="profile-save"><span class="button-label">Enregistrer</span><span>→</span></button>
               </div>
             </form>
             <div class="form-divider"></div>
@@ -218,12 +220,12 @@
               <label class="field"><span>CONFIRMER</span><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8"></label>
               <div id="password-error" class="result-error hidden" role="alert"></div>
               <div class="form-actions">
-                <button class="button button-primary magnetic" type="submit" id="password-save"><span class="button-label">Mettre à jour</span><span>→</span></button>
+                <button class="button button-primary" type="submit" id="password-save"><span class="button-label">Mettre à jour</span><span>→</span></button>
               </div>
             </form>
           </section>
 
-          <section class="panel settings-panel tilt-3d" id="settings-preferences">
+          <section class="panel settings-panel" id="settings-preferences">
             <div class="panel-heading"><div><span class="section-kicker">PRÉFÉRENCES</span><h2>Interface et comportement</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item">
@@ -285,7 +287,7 @@
             </div>
           </section>
 
-          <section class="panel settings-panel tilt-3d" id="settings-search">
+          <section class="panel settings-panel" id="settings-search">
             <div class="panel-heading"><div><span class="section-kicker">RECHERCHE</span><h2>Comportement par défaut</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item">
@@ -326,7 +328,7 @@
             </div>
           </section>
 
-          <section class="panel settings-panel tilt-3d" id="settings-data">
+          <section class="panel settings-panel" id="settings-data">
             <div class="panel-heading"><div><span class="section-kicker">DONNÉES</span><h2>Gestion des données locales</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item">
@@ -334,21 +336,21 @@
                   <strong>Effacer l'historique</strong>
                   <small>Supprimer toutes les recherches de cette session</small>
                 </div>
-                <button class="button button-secondary magnetic" type="button" id="clear-history">Effacer</button>
+                <button class="button button-secondary" type="button" id="clear-history">Effacer</button>
               </div>
               <div class="setting-item">
                 <div class="setting-info">
                   <strong>Effacer les recherches sauvegardées</strong>
                   <small>Supprimer tous les raccourcis enregistrés</small>
                 </div>
-                <button class="button button-secondary magnetic" type="button" id="clear-saved">Effacer</button>
+                <button class="button button-secondary" type="button" id="clear-saved">Effacer</button>
               </div>
               <div class="setting-item">
                 <div class="setting-info">
                   <strong>Exporter mes données</strong>
                   <small>Télécharger l'historique et préférences (JSON)</small>
                 </div>
-                <button class="button button-secondary magnetic" type="button" id="export-data">Exporter</button>
+                <button class="button button-secondary" type="button" id="export-data">Exporter</button>
               </div>
               <div class="setting-item">
                 <div class="setting-info">
@@ -362,12 +364,12 @@
                   <strong>Zone de danger</strong>
                   <small>Actions irréversibles</small>
                 </div>
-                <button class="button magnetic" type="button" id="delete-account" style="border-color: #7a2935; background: #230e12; color: #ff9aa4;">Supprimer mon compte</button>
+                <button class="button" type="button" id="delete-account" style="border-color: #7a2935; background: #230e12; color: #ff9aa4;">Supprimer mon compte</button>
               </div>
             </div>
           </section>
 
-          <section class="panel settings-panel tilt-3d" id="settings-about">
+          <section class="panel settings-panel" id="settings-about">
             <div class="panel-heading"><div><span class="section-kicker">À PROPOS</span><h2>Informations système</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item info-item">
@@ -400,14 +402,14 @@
           <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Les préférences sont stockées localement dans le navigateur</span></footer>
         </section>
         <section class="view" id="view-admin">
-          <div class="page-intro parallax-layer" data-depth="1"><div class="eyebrow">GESTION</div><h1>Administration<span class="red-dot">.</span></h1><p class="subheading">Comptes, rôles et statistiques de la plateforme.</p></div>
+          <div class="page-intro" data-depth="1"><div class="eyebrow">GESTION</div><h1>Administration<span class="red-dot">.</span></h1><p class="subheading">Comptes, rôles et statistiques de la plateforme.</p></div>
           <div class="overview-metrics admin-metrics">
-            <article class="stat-card tilt-3d magnetic"><div class="stat-top"><span>COMPTES</span><span class="stat-icon red" aria-hidden="true">●</span></div><div class="stat-value" id="admin-stat-users">00</div><div class="stat-foot">Utilisateurs enregistrés.</div></article>
-            <article class="stat-card tilt-3d magnetic"><div class="stat-top"><span>RECHERCHES TOTALES</span><span class="stat-icon red" aria-hidden="true">⌕</span></div><div class="stat-value" id="admin-stat-searches">00</div><div class="stat-foot">Recherches lancées par tous les comptes.</div></article>
-            <article class="stat-card tilt-3d magnetic"><div class="stat-top"><span>RACCOURCIS</span><span class="stat-icon red" aria-hidden="true">★</span></div><div class="stat-value" id="admin-stat-saved">00</div><div class="stat-foot">Recherches enregistrées.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>COMPTES</span><span class="stat-icon red" aria-hidden="true">●</span></div><div class="stat-value" id="admin-stat-users">00</div><div class="stat-foot">Utilisateurs enregistrés.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>RECHERCHES TOTALES</span><span class="stat-icon red" aria-hidden="true">⌕</span></div><div class="stat-value" id="admin-stat-searches">00</div><div class="stat-foot">Recherches lancées par tous les comptes.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>RACCOURCIS</span><span class="stat-icon red" aria-hidden="true">★</span></div><div class="stat-value" id="admin-stat-saved">00</div><div class="stat-foot">Recherches enregistrées.</div></article>
           </div>
-          <section class="panel admin-panel tilt-3d">
-            <div class="panel-heading"><div><span class="section-kicker">UTILISATEURS</span><h2>Comptes et rôles</h2></div><button class="text-button magnetic" id="admin-refresh" type="button">Rafraîchir <span>↻</span></button></div>
+          <section class="panel admin-panel">
+            <div class="panel-heading"><div><span class="section-kicker">UTILISATEURS</span><h2>Comptes et rôles</h2></div><button class="text-button" id="admin-refresh" type="button">Rafraîchir <span>↻</span></button></div>
             <div class="admin-table-wrap">
               <table class="admin-table">
                 <thead><tr><th>UTILISATEUR</th><th>ID</th><th>RÔLE</th><th>RECH.</th><th>CRÉÉ LE</th><th>ACTIONS</th></tr></thead>
@@ -424,7 +426,9 @@
     <div class="auth-overlay hidden" id="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="auth-title">
       <div class="auth-card">
         <div class="auth-brand">
-          <span class="brand-mark">K<span>.</span></span>
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M16 16 22 22"/><path d="M7 10h6M10 7v6"/></svg>
+          </span>
           <div><strong id="auth-title">KIKZXW</strong><small>RECHERCHE OSINT · ACCÈS COMPTES</small></div>
         </div>
         <div class="auth-tabs" role="tablist" aria-label="Mode d’authentification">
