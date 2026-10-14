@@ -17,28 +17,29 @@ let currentUser = null;
 let currentResults = null;
 let savedSearches = [];
 let authMode = "login";
+let pendingRequests = 0;
+let loadingBarFinishTimer = 0;
 
-/* ---------- Utilities ---------- */
-function debounce(fn, delay) {
-  let timer = null;
-  return function (...args) {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
-  };
+function startLoadingBar() {
+  const bar = document.querySelector("#loading-bar");
+  if (!bar) return;
+  window.clearTimeout(loadingBarFinishTimer);
+  pendingRequests += 1;
+  bar.classList.remove("complete");
+  bar.classList.add("active");
 }
 
-function element(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
+function stopLoadingBar() {
+  const bar = document.querySelector("#loading-bar");
+  pendingRequests = Math.max(0, pendingRequests - 1);
+  if (!bar || pendingRequests > 0) return;
+  bar.classList.remove("active");
+  bar.classList.add("complete");
+  loadingBarFinishTimer = window.setTimeout(() => {
+    if (pendingRequests === 0) bar.classList.remove("complete");
+  }, 700);
 }
 
-function isPlainObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/* ---------- Sidebar ---------- */
 function setSidebarCollapsed(collapsed, persist = true) {
   document.body.classList.toggle("sidebar-collapsed", collapsed);
   const label = collapsed ? "Déployer la barre latérale" : "Réduire la barre latérale";
@@ -54,336 +55,6 @@ function setSidebarCollapsed(collapsed, persist = true) {
   }
 }
 
-/* ---------- Toast System ---------- */
-const _toastActiveMessages = new Set();
-
-function showToast(message, kind = "info") {
-  // Avoid duplicate messages
-  if (_toastActiveMessages.has(message)) return;
-
-  let host = document.querySelector("#toast-host");
-  if (!host) {
-    host = element("div", "toast-host");
-    host.id = "toast-host";
-    document.body.append(host);
-  }
-
-  // Enforce max 5 toasts
-  const existing = host.querySelectorAll(".toast");
-  if (existing.length >= 5) {
-    const oldest = existing[0];
-    _toastActiveMessages.delete(oldest.dataset.message || "");
-    oldest.remove();
-  }
-
-  const duration = kind === "error" ? 5000 : 3200;
-
-  const toast = element("div", `toast toast-${kind} toast-enter`);
-  toast.dataset.message = message;
-  _toastActiveMessages.add(message);
-
-  const msgSpan = element("span", "toast-message", message);
-  const closeBtn = element("button", "toast-close", "×");
-  closeBtn.type = "button";
-  closeBtn.setAttribute("aria-label", "Fermer la notification");
-  toast.append(msgSpan, closeBtn);
-  host.append(toast);
-
-  // Play sound if preference enabled
-  try {
-    const settings = getSettings();
-    if (settings.toastSound) {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = kind === "error" ? 220 : kind === "success" ? 660 : 440;
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.3);
-    }
-  } catch {
-    // Audio context unavailable
-  }
-
-  // Remove enter class after paint
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => toast.classList.remove("toast-enter"));
-  });
-
-  const dismiss = () => {
-    if (!toast.isConnected) return;
-    _toastActiveMessages.delete(message);
-    toast.classList.add("toast-out");
-    setTimeout(() => toast.remove(), 350);
-  };
-
-  closeBtn.addEventListener("click", dismiss);
-  const autoTimer = setTimeout(dismiss, duration);
-  closeBtn.addEventListener("click", () => clearTimeout(autoTimer), { once: true });
-}
-
-/* ---------- Native Dialog: confirmDialog ---------- */
-function ensureConfirmDialog() {
-  let dlg = document.querySelector("#confirm-dialog");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "confirm-dialog";
-  dlg.className = "native-dialog confirm-dialog";
-  dlg.innerHTML = `
-    <div class="dialog-inner">
-      <p class="dialog-message" id="confirm-dialog-message"></p>
-      <div class="dialog-actions">
-        <button type="button" class="button button-ghost" id="confirm-dialog-cancel">Annuler</button>
-        <button type="button" class="button button-danger" id="confirm-dialog-ok">Confirmer</button>
-      </div>
-    </div>`;
-  document.body.append(dlg);
-  return dlg;
-}
-
-function confirmDialog(message) {
-  return new Promise((resolve) => {
-    const dlg = ensureConfirmDialog();
-    dlg.querySelector("#confirm-dialog-message").textContent = message;
-    const ok = dlg.querySelector("#confirm-dialog-ok");
-    const cancel = dlg.querySelector("#confirm-dialog-cancel");
-    const finish = (result) => {
-      dlg.close();
-      resolve(result);
-    };
-    ok.onclick = () => finish(true);
-    cancel.onclick = () => finish(false);
-    dlg.onclose = () => resolve(false);
-    dlg.showModal();
-  });
-}
-
-/* ---------- Native Dialog: saveSearchDialog ---------- */
-function ensureSaveSearchDialog() {
-  let dlg = document.querySelector("#save-search-dialog");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "save-search-dialog";
-  dlg.className = "native-dialog save-search-dialog";
-  dlg.innerHTML = `
-    <div class="dialog-inner">
-      <label class="dialog-label" for="save-search-dialog-input">Nom de cette recherche enregistrée</label>
-      <input id="save-search-dialog-input" class="dialog-input" type="text" autocomplete="off" />
-      <div class="dialog-actions">
-        <button type="button" class="button button-ghost" id="save-search-dialog-cancel">Annuler</button>
-        <button type="button" class="button" id="save-search-dialog-ok">Enregistrer</button>
-      </div>
-    </div>`;
-  document.body.append(dlg);
-  return dlg;
-}
-
-function promptDialog(defaultValue) {
-  return new Promise((resolve) => {
-    const dlg = ensureSaveSearchDialog();
-    const input = dlg.querySelector("#save-search-dialog-input");
-    const ok = dlg.querySelector("#save-search-dialog-ok");
-    const cancel = dlg.querySelector("#save-search-dialog-cancel");
-    input.value = defaultValue || "";
-    const finish = (result) => {
-      dlg.close();
-      resolve(result);
-    };
-    ok.onclick = () => finish(input.value);
-    cancel.onclick = () => finish(null);
-    dlg.onclose = () => resolve(null);
-    // Submit on Enter
-    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(input.value); } };
-    dlg.showModal();
-    input.focus();
-    input.select();
-  });
-}
-
-/* ---------- Loading Bar ---------- */
-let _loadingBarTimer = null;
-let _loadingBarProgress = 0;
-let _loadingBarActive = 0;
-
-function ensureLoadingBar() {
-  let bar = document.querySelector("#loading-bar");
-  if (bar) return bar;
-  bar = element("div", "loading-bar");
-  bar.id = "loading-bar";
-  bar.setAttribute("role", "progressbar");
-  bar.setAttribute("aria-hidden", "true");
-  document.body.prepend(bar);
-  return bar;
-}
-
-function startLoadingBar() {
-  _loadingBarActive += 1;
-  const bar = ensureLoadingBar();
-  if (_loadingBarActive === 1) {
-    _loadingBarProgress = 0;
-    bar.style.width = "0%";
-    bar.classList.add("active");
-    _advanceLoadingBar();
-  }
-}
-
-function _advanceLoadingBar() {
-  const bar = ensureLoadingBar();
-  const step = Math.random() * 12 + 3;
-  _loadingBarProgress = Math.min(_loadingBarProgress + step, 85);
-  bar.style.width = `${_loadingBarProgress}%`;
-  if (_loadingBarProgress < 85) {
-    _loadingBarTimer = setTimeout(_advanceLoadingBar, 200 + Math.random() * 400);
-  }
-}
-
-function stopLoadingBar() {
-  _loadingBarActive = Math.max(0, _loadingBarActive - 1);
-  if (_loadingBarActive > 0) return;
-  clearTimeout(_loadingBarTimer);
-  const bar = ensureLoadingBar();
-  bar.style.width = "100%";
-  setTimeout(() => {
-    bar.classList.remove("active");
-    bar.style.width = "0%";
-    _loadingBarProgress = 0;
-  }, 300);
-}
-
-/* ---------- Scroll-to-top button ---------- */
-function ensureScrollTopBtn() {
-  let btn = document.querySelector("#scroll-top-btn");
-  if (btn) return btn;
-  btn = element("button", "scroll-top-btn");
-  btn.id = "scroll-top-btn";
-  btn.type = "button";
-  btn.setAttribute("aria-label", "Remonter en haut de la page");
-  btn.title = "Retour en haut";
-  btn.textContent = "↑";
-  btn.setAttribute("aria-hidden", "true");
-  document.body.append(btn);
-  return btn;
-}
-
-function initScrollTopBtn() {
-  const btn = ensureScrollTopBtn();
-  btn.addEventListener("click", () => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-  window.addEventListener("scroll", () => {
-    const visible = window.scrollY > 400;
-    btn.classList.toggle("visible", visible);
-    btn.setAttribute("aria-hidden", String(!visible));
-  }, { passive: true });
-}
-
-/* ---------- Offline / Online detection ---------- */
-let _offlineBanner = null;
-
-function ensureOfflineBanner() {
-  if (_offlineBanner) return _offlineBanner;
-  _offlineBanner = element("div", "offline-banner hidden");
-  _offlineBanner.id = "offline-banner";
-  _offlineBanner.setAttribute("role", "alert");
-  _offlineBanner.textContent = "⚠ Connexion perdue — certaines fonctionnalités sont indisponibles.";
-  document.body.prepend(_offlineBanner);
-  return _offlineBanner;
-}
-
-function initNetworkDetection() {
-  const banner = ensureOfflineBanner();
-  window.addEventListener("offline", () => {
-    banner.classList.remove("hidden");
-    showToast("Connexion perdue — mode hors ligne.", "warn");
-  });
-  window.addEventListener("online", () => {
-    banner.classList.add("hidden");
-    showToast("Connexion rétablie.", "success");
-  });
-  if (!navigator.onLine) banner.classList.remove("hidden");
-}
-
-/* ---------- Keyboard Shortcuts ---------- */
-function ensureShortcutsDialog() {
-  let dlg = document.querySelector("#shortcuts-dialog");
-  if (dlg) return dlg;
-  dlg = document.createElement("dialog");
-  dlg.id = "shortcuts-dialog";
-  dlg.className = "native-dialog shortcuts-dialog";
-  dlg.innerHTML = `
-    <div class="dialog-inner">
-      <h2 class="dialog-title">Raccourcis clavier</h2>
-      <ul class="shortcuts-list">
-        <li><kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>⌘K</kbd> — Recherche rapide</li>
-        <li><kbd>Alt</kbd>+<kbd>1</kbd> — Vue Tableau de bord</li>
-        <li><kbd>Alt</kbd>+<kbd>2</kbd> — Vue Recherche</li>
-        <li><kbd>Alt</kbd>+<kbd>3</kbd> — Vue Historique</li>
-        <li><kbd>Alt</kbd>+<kbd>4</kbd> — Vue Paramètres</li>
-        <li><kbd>Échap</kbd> — Fermer menu / dialog</li>
-        <li><kbd>Ctrl</kbd>+<kbd>/</kbd> — Afficher les raccourcis</li>
-        <li><kbd>?</kbd> — Afficher les raccourcis (hors champ texte)</li>
-      </ul>
-      <div class="dialog-actions">
-        <button type="button" class="button" id="shortcuts-dialog-close">Fermer</button>
-      </div>
-    </div>`;
-  document.body.append(dlg);
-  dlg.querySelector("#shortcuts-dialog-close").addEventListener("click", () => dlg.close());
-  return dlg;
-}
-
-function handleKeyboardShortcuts(e) {
-  const tag = document.activeElement?.tagName?.toLowerCase();
-  const inInput = ["input", "textarea", "select"].includes(tag) || document.activeElement?.isContentEditable;
-
-  // Ctrl+K / Cmd+K — go to search, focus search field
-  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-    e.preventDefault();
-    showView("search");
-    setTimeout(() => {
-      const field = document.querySelector("#search-field-filter");
-      if (field) field.focus();
-    }, 50);
-    return;
-  }
-
-  // Ctrl+/ — show shortcuts
-  if ((e.ctrlKey || e.metaKey) && e.key === "/") {
-    e.preventDefault();
-    ensureShortcutsDialog().showModal();
-    return;
-  }
-
-  // Alt+1..4 — switch views
-  if (e.altKey && !e.ctrlKey && !e.metaKey) {
-    const viewMap = { "1": "overview", "2": "search", "3": "history", "4": "settings" };
-    if (viewMap[e.key]) {
-      e.preventDefault();
-      showView(viewMap[e.key]);
-      return;
-    }
-  }
-
-  // Escape — close user menu, close open dialogs
-  if (e.key === "Escape") {
-    // Dialogs handle their own Escape; just close user menu here
-    if (!userMenuDropdown.classList.contains("hidden")) {
-      closeUserMenu();
-      userMenuTrigger.focus();
-    }
-    return;
-  }
-
-  // ? — show shortcuts when not in input
-  if (e.key === "?" && !inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    ensureShortcutsDialog().showModal();
-    return;
-  }
-}
-
 /* ---------- 3D Effects & Mouse Tracking ---------- */
 let mouseX = 0.5;
 let mouseY = 0.5;
@@ -394,8 +65,10 @@ let reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matche
 function init3DEffects() {
   if (reducedMotion) return;
 
+  // CSS custom properties for mouse position
   const root = document.documentElement;
 
+  // Mouse move tracking
   document.addEventListener("mousemove", (e) => {
     mouseX = e.clientX / window.innerWidth;
     mouseY = e.clientY / window.innerHeight;
@@ -403,6 +76,7 @@ function init3DEffects() {
     root.style.setProperty("--mouse-y", `${mouseY * 100}%`);
   });
 
+  // Scroll tracking
   let ticking = false;
   window.addEventListener("scroll", () => {
     scrollY = window.scrollY;
@@ -412,27 +86,29 @@ function init3DEffects() {
       requestAnimationFrame(() => {
         updateScrollProgress();
         updateParallax();
-        updateScrollReveal();
         ticking = false;
       });
     }
   }, { passive: true });
 
+  // Scroll progress bar
   const progressBar = document.createElement("div");
   progressBar.className = "scroll-progress";
   document.body.appendChild(progressBar);
 
+  // Tilt effect for .tilt-3d elements
   document.querySelectorAll(".tilt-3d").forEach((el) => {
     el.addEventListener("mousemove", (e) => handleTilt(e, el));
     el.addEventListener("mouseleave", () => resetTilt(el));
   });
 
+  // Magnetic buttons
   document.querySelectorAll(".magnetic").forEach((btn) => {
     btn.addEventListener("mousemove", (e) => handleMagnetic(e, btn));
     btn.addEventListener("mouseleave", () => resetMagnetic(btn));
   });
 
-  // Avoid injecting blurred blobs and SVG turbulence filters into every panel.
+  // Initialize scroll reveal observer
   initScrollReveal();
 }
 
@@ -452,6 +128,7 @@ function updateParallax() {
     layer.style.transform = `translate3d(0, ${y}px, 0)`;
   });
 
+  // Hero parallax
   document.querySelectorAll(".welcome-hero, .page-intro").forEach((hero) => {
     const rect = hero.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > window.innerHeight) return;
@@ -460,7 +137,6 @@ function updateParallax() {
   });
 }
 
-/* BUG FIX #1: handleTilt — logique Math.max/Math.min corrigée */
 function handleTilt(e, el) {
   const rect = el.getBoundingClientRect();
   const centerX = rect.left + rect.width / 2;
@@ -468,8 +144,8 @@ function handleTilt(e, el) {
   const deltaX = (e.clientX - centerX) / (rect.width / 2);
   const deltaY = (e.clientY - centerY) / (rect.height / 2);
   const maxTilt = 8;
-  const tiltX = Math.max(-maxTilt, Math.min(maxTilt, deltaY * maxTilt));
-  const tiltY = Math.max(-maxTilt, Math.min(maxTilt, -deltaX * maxTilt));
+  const tiltX = Math.max(-maxTilt, Math.max(maxTilt, deltaY * maxTilt));
+  const tiltY = Math.max(-maxTilt, Math.max(maxTilt, -deltaX * maxTilt));
   el.style.setProperty("--tilt-x", `${tiltY}deg`);
   el.style.setProperty("--tilt-y", `${tiltX}deg`);
 }
@@ -512,15 +188,11 @@ function addLiquidBlobs() {
 }
 
 function initScrollReveal() {
-  if (!("IntersectionObserver" in window)) {
-    document.querySelectorAll(".panel, .stat-card, .search-result-card, .settings-panel, .welcome-hero, .page-intro")
-      .forEach((el) => el.classList.add("visible"));
-    return;
-  }
   const observer = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (entry.isIntersecting) {
         entry.target.classList.add("visible");
+        // Stagger children
         const children = entry.target.querySelectorAll(".scroll-reveal-3d");
         children.forEach((child, i) => {
           child.style.transitionDelay = `${i * 80}ms`;
@@ -530,9 +202,24 @@ function initScrollReveal() {
   }, { threshold: 0.1, rootMargin: "50px" });
 
   document.querySelectorAll(".panel, .stat-card, .search-result-card, .settings-panel, .welcome-hero, .page-intro").forEach((el) => {
-    if (!el.classList.contains("scroll-reveal-3d")) el.classList.add("scroll-reveal-3d");
+    if (!el.classList.contains("scroll-reveal-3d")) {
+      el.classList.add("scroll-reveal-3d");
+    }
     observer.observe(el);
   });
+}
+
+function initScrollToTop() {
+  const button = document.querySelector("#scroll-top-btn");
+  if (!button) return;
+  const updateVisibility = () => {
+    const visible = window.scrollY > 400;
+    button.hidden = !visible;
+    button.classList.toggle("visible", visible);
+  };
+  button.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+  window.addEventListener("scroll", updateVisibility, { passive: true });
+  updateVisibility();
 }
 
 function addDepthToCards() {
@@ -549,6 +236,13 @@ if (document.readyState === "loading") {
   init3DEffects();
 }
 
+// Re-initialize on view change
+const originalShowView = showView;
+showView = function(name) {
+  originalShowView(name);
+  setTimeout(addDepthToCards, 100);
+};
+
 let sidebarInitiallyCollapsed = false;
 try {
   sidebarInitiallyCollapsed = window.localStorage.getItem(sidebarPreferenceKey) === "true";
@@ -557,27 +251,8 @@ try {
 }
 setSidebarCollapsed(sidebarInitiallyCollapsed, false);
 
-/* BUG FIX #2: showView déclarée ICI, puis wrappée APRÈS — plus de hoisting problem */
 function showView(name) {
   if (name === "admin" && currentUser?.role !== "admin") name = "overview";
-
-  // Auto-save search criteria before navigating away (amélioration #18)
-  const settings = getSettings();
-  if (settings.autoSaveSearch) {
-    try {
-      const form = document.querySelector("#search-form");
-      const activeView = document.querySelector(".view.active");
-      if (activeView && activeView.id === "view-search" && form) {
-        const snapshot = {};
-        for (const input of form.querySelectorAll("input[name], select[name]")) {
-          if (input.type === "checkbox") { if (input.checked) snapshot[input.name] = true; }
-          else if (input.value.trim()) snapshot[input.name] = input.value.trim();
-        }
-        window.localStorage.setItem("kikzxw.search-autosave", JSON.stringify(snapshot));
-      }
-    } catch { /* storage unavailable */ }
-  }
-
   for (const view of views) {
     document.querySelector(`#view-${view}`).classList.toggle("active", view === name);
   }
@@ -588,38 +263,18 @@ function showView(name) {
     if (isActive) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-
-  // Restore auto-saved search criteria when entering search view (#18)
-  if (name === "search" && settings.autoSaveSearch) {
-    try {
-      const saved = window.localStorage.getItem("kikzxw.search-autosave");
-      if (saved) {
-        const snapshot = JSON.parse(saved);
-        const form = document.querySelector("#search-form");
-        if (form) {
-          for (const [key, value] of Object.entries(snapshot)) {
-            const field = form.elements.namedItem(key);
-            if (!field || !("value" in field)) continue;
-            if (field.type === "checkbox") field.checked = Boolean(value);
-            else field.value = String(value);
-          }
-          updateSearchControls();
-        }
-      }
-    } catch { /* ignore */ }
-  }
-
   if (name === "history") renderActivity();
   if (name === "admin") loadAdminPanel();
   if (name === "settings") loadSettings();
-
-  // Refresh card depth after view switch; content remains visible if an observer is unavailable.
-  setTimeout(() => {
-    addDepthToCards();
-  }, 100);
 }
 
-/* ---------- Value formatting ---------- */
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
 function formatValue(value) {
   if (value === undefined || value === null) return "";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
@@ -651,7 +306,6 @@ function formatValue(value) {
   return text;
 }
 
-/* ---------- Search field definitions ---------- */
 const searchFieldGroups = [
   {
     title: "Identité",
@@ -1010,26 +664,6 @@ function hasDisplayValue(value) {
   return false;
 }
 
-/* ---------- Highlight search terms (#12) ---------- */
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function highlightText(text, query) {
-  if (!query) return escapeHtml(text);
-  const safe = escapeRegex(query);
-  const re = new RegExp(`(${safe})`, "gi");
-  return escapeHtml(text).replace(re, "<mark class='search-result-highlight'>$1</mark>");
-}
-
 function searchResultCard(record, index) {
   const source = isPlainObject(record) ? record : { valeur: record };
   const fields = sortSearchEntries(source)
@@ -1069,26 +703,15 @@ function searchResultCard(record, index) {
   const additionalFields = fields.filter(([key]) => !titleFields.includes(key));
   const primaryFields = additionalFields.slice(0, 8);
   const extraFields = additionalFields.slice(8);
-
-  // Get current result filter query for highlight
-  const filterQuery = document.querySelector("#result-filter")?.value.trim().toLocaleLowerCase("fr") || "";
-
   const renderFields = (container, entries) => {
     for (const [key, value] of entries) {
       const formatted = formatValue(value);
       if (!formatted) continue;
       const row = element("div", "search-result-field");
-      // Label: use textContent (safe)
-      const labelEl = element("span", "search-result-label");
-      labelEl.textContent = humanizeLabel(key);
-      // Value: use innerHTML with sanitised highlight
-      const valueEl = element("span", "search-result-value");
-      if (filterQuery) {
-        valueEl.innerHTML = highlightText(formatted, filterQuery);
-      } else {
-        valueEl.textContent = formatted;
-      }
-      row.append(labelEl, valueEl);
+      row.append(
+        element("span", "search-result-label", humanizeLabel(key)),
+        element("span", "search-result-value", formatted),
+      );
       container.append(row);
     }
   };
@@ -1401,7 +1024,9 @@ function renderResultMap(results) {
   };
   const fitPoints = () => {
     if (!points.length) {
-      zoom = 1; translateX = 0; translateY = 0;
+      zoom = 1;
+      translateX = 0;
+      translateY = 0;
       renderTransform();
       return;
     }
@@ -1586,7 +1211,6 @@ function hideSearchPager() {
   document.querySelector("#search-pager").classList.add("hidden");
 }
 
-/* Amélioration #12: applyResultFilter avec highlight */
 function applyResultFilter() {
   const filter = document.querySelector("#result-filter");
   const query = filter.value.trim().toLocaleLowerCase("fr");
@@ -1595,20 +1219,1352 @@ function applyResultFilter() {
   for (const card of cards) {
     const matches = !query || card.textContent.toLocaleLowerCase("fr").includes(query);
     card.classList.toggle("hidden", !matches);
-    if (matches) {
-      visible += 1;
-      // Update highlights on visible value spans
-      for (const valueEl of card.querySelectorAll(".search-result-value")) {
-        const raw = valueEl.textContent;
-        if (query) {
-          valueEl.innerHTML = highlightText(raw, query);
-        } else {
-          // Remove marks, restore plain text
-          valueEl.textContent = valueEl.textContent;
-        }
-      }
-    }
+    if (matches) visible += 1;
   }
   const count = document.querySelector(".search-results-count");
   if (count) count.textContent = `${visible} AFFICHÉ${visible === 1 ? "" : "S"}`;
 }
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function searchErrorMessage(payload, statusCode) {
+  const candidates = [payload?.error, payload?.message, payload?.detail];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    if (isPlainObject(candidate) && typeof candidate.message === "string" && candidate.message.trim()) {
+      return candidate.message.trim();
+    }
+  }
+  return `La recherche a échoué (HTTP ${statusCode}).`;
+}
+
+function safeResponseNumber(value, minimum) {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isSafeInteger(number) && number >= minimum ? number : null;
+}
+
+function normalizeSearchResponse(payload, statusCode, search) {
+  if (!isPlainObject(payload)) {
+    return { error: "Le service de recherche a renvoyé une réponse JSON inattendue." };
+  }
+
+  const apiStatus = payload.status;
+  const apiFailed = payload.success === false
+    || apiStatus === "error"
+    || (typeof apiStatus === "number" && apiStatus >= 400)
+    || Boolean(payload.error);
+  if (statusCode < 200 || statusCode >= 300 || apiFailed) {
+    return { error: searchErrorMessage(payload, statusCode) };
+  }
+
+  const data = isPlainObject(payload.data) ? payload.data : {};
+  const rawResults = Array.isArray(payload.results)
+    ? payload.results
+    : Array.isArray(data.results)
+      ? data.results
+      : Array.isArray(payload.data)
+        ? payload.data
+        : null;
+  if (!rawResults) {
+    return { error: "Le service de recherche a renvoyé un JSON valide, mais sans liste de résultats exploitable." };
+  }
+
+  const usable = rawResults.map((entry) => {
+    if (isPlainObject(entry)) return { entry, valid: true };
+    if (entry !== undefined && entry !== null && typeof entry !== "function") {
+      return { entry: { valeur: entry }, valid: typeof entry !== "object" };
+    }
+    return { entry: null, valid: false };
+  });
+  const results = usable.map((item) => item.entry).filter(Boolean);
+  const invalidResults = usable.filter((item) => !item.entry).length;
+
+  const meta = isPlainObject(payload.meta)
+    ? payload.meta
+    : isPlainObject(payload.data) && isPlainObject(payload.data.meta)
+      ? payload.data.meta
+      : {};
+  const readNumber = (...values) => {
+    for (const value of values) {
+      const number = safeResponseNumber(value, 0);
+      if (number !== null) return number;
+    }
+    return null;
+  };
+  const pages = readNumber(meta.pages, payload.pages) || 1;
+  const requestedPage = readNumber(meta.page, payload.page, search.page) || 1;
+  const page = Math.min(Math.max(requestedPage, 1), pages);
+  const total = readNumber(meta.total, payload.total, data.total) ?? rawResults.length;
+  const metaQuery = isPlainObject(meta.query) ? meta.query : isPlainObject(payload.query) ? payload.query : null;
+  return {
+    data: { results },
+    invalidResults,
+    meta: {
+      page,
+      pages,
+      total: Math.max(total, results.length),
+      query: metaQuery || search,
+    },
+  };
+}
+
+function renderSearchResult(payload, statusCode = 200, search = {}) {
+  const panel = document.querySelector("#search-result-panel");
+  const statusBadge = document.querySelector("#search-result-status");
+  const toolbar = document.querySelector("#result-toolbar");
+  const normalized = normalizeSearchResponse(payload, statusCode, search);
+  const ok = !normalized.error;
+  panel.classList.remove("hidden");
+  statusBadge.className = `result-status ${ok ? "success" : "error"}`;
+  statusBadge.textContent = ok ? "TERMINÉ" : "ERREUR";
+  document.querySelector("#search-result-title").textContent = searchQueryTitle(normalized.meta?.query || search);
+
+  const summary = document.querySelector("#search-result-summary");
+  const sections = document.querySelector("#search-result-sections");
+  const mapSlot = document.querySelector("#search-result-map");
+  summary.replaceChildren();
+  sections.replaceChildren();
+  clearResultMap(mapSlot);
+
+  if (!ok) {
+    currentResults = null;
+    toolbar.classList.add("hidden");
+    summary.append(element("div", "result-error", normalized.error));
+    hideSearchPager();
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  const { data, meta, invalidResults } = normalized;
+  const { results } = data;
+  const { total, page, pages } = meta;
+  currentResults = { results, meta: { ...meta, query: normalized.meta.query }, invalidResults };
+  renderResultMap(results);
+
+  const chips = [
+    `${total} RÉSULTAT${total === 1 ? "" : "S"}`,
+    `PAGE ${page} / ${pages}`,
+  ];
+  for (const text of chips) summary.append(element("div", "summary-chip", text));
+  if (pages > 1) renderSearchPager(page, pages);
+  else hideSearchPager();
+
+  const resultsSection = element("section", "result-section search-results");
+  const resultsHeading = element("div", "search-results-heading");
+  resultsHeading.append(
+    element("h3", "result-section-title", "Résultats"),
+    element("span", "search-results-count", `${results.length} AFFICHÉ${results.length === 1 ? "" : "S"}`),
+  );
+  resultsSection.append(resultsHeading);
+
+  if (!results.length) {
+    resultsSection.append(element(
+      "p",
+      "search-result-empty",
+      invalidResults
+        ? "La réponse ne contenait aucun résultat exploitable."
+        : "Aucun résultat pour ces critères.",
+    ));
+  } else {
+    const resultList = element("div", "search-result-list");
+    for (const [index, record] of results.slice(0, 50).entries()) {
+      resultList.append(searchResultCard(record, index));
+    }
+    resultsSection.append(resultList);
+    if (invalidResults) {
+      resultsSection.append(element("div", "result-note", `${invalidResults} entrée(s) ignorée(s), car leur format JSON était inattendu.`));
+    }
+    if (results.length > 50) {
+      resultsSection.append(element("div", "result-note", `${results.length - 50} résultat(s) supplémentaires non affichés — utilisez la pagination à côté du bouton de recherche.`));
+    }
+  }
+  sections.append(resultsSection);
+
+  toolbar.classList.remove("hidden");
+  const filterInput = document.querySelector("#result-filter");
+  if (filterInput.value) filterInput.value = "";
+  applyResultFilter();
+
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function downloadResultFile(filename, contents, type) {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportResultsJson() {
+  if (!currentResults) return showToast("Aucun résultat à exporter.", "error");
+  downloadResultFile(`kikzxw-resultats-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify(currentResults, null, 2), "application/json;charset=utf-8");
+}
+
+function exportResultsCsv() {
+  if (!currentResults?.results?.length) return showToast("Aucun résultat à exporter.", "error");
+  const rows = currentResults.results.map((item) => isPlainObject(item) ? item : { valeur: item });
+  const columns = [...new Set(rows.flatMap((row) => Object.keys(row).filter((key) => !key.startsWith("_"))))];
+  const escapeCell = (value) => `"${formatValue(value).replace(/"/g, '""')}"`;
+  const csv = [columns.map(escapeCell).join(";"), ...rows.map((row) => columns.map((key) => escapeCell(row[key])).join(";"))].join("\r\n");
+  downloadResultFile(`kikzxw-resultats-${new Date().toISOString().slice(0, 10)}.csv`, `\uFEFF${csv}`, "text/csv;charset=utf-8");
+}
+
+async function copyResultsJson() {
+  if (!currentResults) return showToast("Aucun résultat à copier.", "error");
+  const text = JSON.stringify(currentResults, null, 2);
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.append(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      if (!copied) throw new Error("Le navigateur a refusé l'accès au presse-papiers.");
+    }
+    showToast("Résultats copiés en JSON.");
+  } catch (error) {
+    showToast(error.message || "Impossible de copier les résultats.", "error");
+  }
+}
+
+async function readJsonResponse(response, serviceName) {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(`${serviceName} a renvoyé une réponse vide (HTTP ${response.status}).`);
+  }
+  try {
+    const payload = JSON.parse(text.replace(/^\uFEFF/, ""));
+    if (!isPlainObject(payload)) throw new Error("JSON object expected");
+    return payload;
+  } catch {
+    throw new Error(`${serviceName} a renvoyé une réponse JSON invalide ou inattendue (HTTP ${response.status}).`);
+  }
+}
+
+async function runSearch(payload, button) {
+  const criteriaPayload = { ...payload };
+  delete criteriaPayload.page;
+  activeSearch = criteriaPayload;
+  hideSearchPager();
+  button.disabled = true;
+  const buttonLabel = button.querySelector(".button-label");
+  const initialText = buttonLabel?.textContent;
+  if (buttonLabel) buttonLabel.textContent = "Recherche en cours…";
+  document.querySelector("#search-form-error").classList.add("hidden");
+  const panel = document.querySelector("#search-result-panel");
+  panel.classList.remove("hidden");
+  document.querySelector("#search-result-title").textContent = searchQueryTitle(payload);
+  document.querySelector("#search-result-status").className = "result-status";
+  document.querySelector("#search-result-status").textContent = "EN COURS";
+  document.querySelector("#search-result-summary").replaceChildren(element("div", "result-note", "Recherche en cours…"));
+  clearResultMap();
+  document.querySelector("#search-result-sections").replaceChildren();
+
+  let statusCode = 502;
+  let data = {};
+  startLoadingBar();
+  try {
+    const response = await fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30_000),
+    });
+    statusCode = response.status;
+    data = await readJsonResponse(response, "Le service de recherche");
+    if (response.status === 401) {
+      applySession(null);
+      showToast("Session expirée : reconnectez-vous.", "error");
+    }
+  } catch (error) {
+    data = { error: error.message || "Impossible de joindre le serveur." };
+  } finally {
+    stopLoadingBar();
+    button.disabled = false;
+    if (buttonLabel) buttonLabel.textContent = initialText;
+  }
+
+  const criteria = Object.keys(payload).filter((key) => !["page", "per_page", "flexible"].includes(key)).length;
+  activity.push({
+    target: searchQueryTitle(payload),
+    searchPayload: { ...payload },
+    responsePayload: data,
+    statusCode,
+    timestamp: Date.now(),
+    time: new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date()),
+    ok: statusCode >= 200 && statusCode < 300 && !data?.error,
+    detail: `${criteria} CRITÈRE${criteria === 1 ? "" : "S"} · RECHERCHE`,
+  });
+  renderActivity();
+  renderSearchResult(data, statusCode, payload);
+}
+
+function renderActivityList(container, emptyMessage) {
+  container.replaceChildren();
+  if (activity.length === 0) {
+    const empty = element("div", "empty-state");
+    empty.append(
+      element("span", "empty-symbol", "◷"),
+      element("strong", "", emptyMessage),
+      element("p", "", "Lancez une recherche pour voir son activité ici."),
+    );
+    container.append(empty);
+    return;
+  }
+
+  for (const item of [...activity].reverse().slice(0, 20)) {
+    const row = element("article", "activity-item");
+    const icon = element("span", "activity-icon", "⌕");
+    const main = element("div", "activity-main");
+    const savedDate = new Date(item.timestamp);
+    const formattedTime = Number.isNaN(savedDate.getTime())
+      ? item.time || "Heure inconnue"
+      : new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(savedDate);
+    main.append(
+      element("div", "activity-title", item.target),
+      element("div", "activity-meta", `${formattedTime} · ${item.detail || "Recherche multicritère"}`),
+    );
+    const action = element("button", "activity-open", item.ok ? "Ouvrir" : "Reprendre");
+    action.type = "button";
+    action.setAttribute("aria-label", `${item.ok ? "Ouvrir" : "Reprendre"} la recherche : ${item.target}`);
+    action.disabled = !item.searchPayload;
+    action.addEventListener("click", () => restoreActivitySearch(item));
+    row.append(icon, main, element("span", `activity-badge ${item.ok ? "" : "error"}`, item.ok ? "TERMINÉ" : "ERREUR"), action);
+    container.append(row);
+  }
+}
+
+function restoreActivitySearch(item) {
+  if (!item.searchPayload) {
+    showToast("Les critères de cette entrée ne sont plus disponibles.", "error");
+    return;
+  }
+  const form = document.querySelector("#search-form");
+  form.reset();
+  document.querySelector("#search-field-filter").value = "";
+  for (const [key, value] of Object.entries(item.searchPayload)) {
+    const field = form.elements.namedItem(key);
+    if (!field || !("value" in field)) continue;
+    field.value = String(value);
+  }
+  updateSearchControls();
+  showView("search");
+  if (item.responsePayload && Number.isInteger(item.statusCode)) {
+    renderSearchResult(item.responsePayload, item.statusCode, item.searchPayload);
+    showToast("Résultats de cette recherche restaurés depuis l'historique.");
+  } else {
+    showToast("Critères restaurés. Relancez la recherche pour obtenir les résultats.", "info");
+  }
+}
+
+function renderSearchChart() {
+  const container = document.querySelector("#search-chart");
+  const totalLabel = document.querySelector("#search-chart-total");
+  if (!container || !totalLabel) return;
+
+  const now = new Date();
+  const currentHour = new Date(now);
+  currentHour.setMinutes(0, 0, 0);
+  const buckets = Array.from({ length: 12 }, (_, index) => {
+    const start = new Date(currentHour);
+    start.setHours(currentHour.getHours() - (11 - index));
+    return { start, count: 0 };
+  });
+
+  for (const item of activity) {
+    const timestamp = Number(item.timestamp);
+    if (!Number.isFinite(timestamp)) continue;
+    const hour = new Date(timestamp);
+    hour.setMinutes(0, 0, 0);
+    const bucket = buckets.find(({ start }) => start.getTime() === hour.getTime());
+    if (bucket) bucket.count += 1;
+  }
+
+  const count = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
+  const maximum = Math.max(1, ...buckets.map((bucket) => bucket.count));
+  const width = 720;
+  const height = 210;
+  const plot = { left: 48, top: 16, right: 704, bottom: 163 };
+  const plotHeight = plot.bottom - plot.top;
+  const plotWidth = plot.right - plot.left;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("aria-hidden", "true");
+
+  const makeSvg = (tag, attributes, parent = svg) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+    parent.append(node);
+    return node;
+  };
+
+  const defs = makeSvg("defs", {});
+  const gradient = makeSvg("linearGradient", { id: "search-chart-fill", x1: "0", y1: "0", x2: "0", y2: "1" }, defs);
+  makeSvg("stop", { offset: "0", "stop-color": "#54d18a", "stop-opacity": ".35" }, gradient);
+  makeSvg("stop", { offset: "1", "stop-color": "#54d18a", "stop-opacity": "0" }, gradient);
+
+  const tickCount = Math.min(3, maximum);
+  for (let tick = 0; tick <= tickCount; tick += 1) {
+    const value = Math.round(maximum * tick / tickCount);
+    const y = plot.bottom - value / maximum * plotHeight;
+    makeSvg("line", { x1: plot.left, x2: plot.right, y1: y, y2: y, class: "search-chart-grid" });
+    const label = makeSvg("text", { x: plot.left - 10, y: y + 4, "text-anchor": "end", class: "search-chart-axis" });
+    label.textContent = String(value);
+  }
+
+  const step = plotWidth / (buckets.length - 1);
+  const points = buckets.map((bucket, index) => ({
+    x: plot.left + step * index,
+    y: plot.bottom - bucket.count / maximum * plotHeight,
+    bucket,
+    index,
+  }));
+
+  const toCurve = (pts) => {
+    if (pts.length < 2) return "";
+    const tension = 0.8;
+    let path = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const p0 = pts[i - 1] || pts[i];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2] || p2;
+      const cp1x = p1.x + ((p2.x - p0.x) / 6) * tension;
+      const cp1y = p1.y + ((p2.y - p0.y) / 6) * tension;
+      const cp2x = p2.x - ((p3.x - p1.x) / 6) * tension;
+      const cp2y = p2.y - ((p3.y - p1.y) / 6) * tension;
+      path += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+    return path;
+  };
+
+  const linePath = toCurve(points);
+  makeSvg("path", {
+    d: `${linePath} L ${plot.right} ${plot.bottom} L ${plot.left} ${plot.bottom} Z`,
+    class: "search-chart-area",
+    fill: "url(#search-chart-fill)",
+  });
+  makeSvg("path", { d: linePath, class: "search-chart-line", pathLength: "1" });
+
+  for (const point of points) {
+    const isCurrent = point.index === points.length - 1;
+    const dot = makeSvg("circle", {
+      cx: point.x,
+      cy: point.y,
+      r: isCurrent ? 4.5 : 3.2,
+      class: `search-chart-dot${isCurrent ? " current" : ""}${point.bucket.count ? " has-value" : ""}`,
+    });
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${new Intl.DateTimeFormat("fr-FR", { hour: "2-digit" }).format(point.bucket.start)} · ${point.bucket.count} recherche${point.bucket.count === 1 ? "" : "s"}`;
+    dot.append(title);
+  }
+
+  buckets.forEach((bucket, index) => {
+    if (index % 3 !== 0 && index !== buckets.length - 1) return;
+    const label = makeSvg("text", {
+      x: plot.left + step * index,
+      y: plot.bottom + 23,
+      "text-anchor": "middle",
+      class: "search-chart-axis search-chart-time",
+    });
+    label.textContent = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit" }).format(bucket.start);
+  });
+
+  if (count === 0) {
+    const empty = makeSvg("text", { x: width / 2, y: 93, "text-anchor": "middle", class: "search-chart-empty" });
+    empty.textContent = "Lancez une recherche pour voir votre activité";
+  }
+
+  container.replaceChildren(svg);
+  container.setAttribute(
+    "aria-label",
+    count
+      ? `${count} recherche${count === 1 ? "" : "s"} effectuée${count === 1 ? "" : "s"} au cours des douze dernières heures.`
+      : "Aucune recherche effectuée au cours des douze dernières heures.",
+  );
+  totalLabel.textContent = `${count} RECHERCHE${count === 1 ? "" : "S"} · 12 H`;
+}
+
+function renderActivity() {
+  document.querySelector("#stat-searches").textContent = String(activity.length).padStart(2, "0");
+  renderSearchChart();
+  document.querySelector("#history-count").textContent = `${String(activity.length).padStart(2, "0")} ENTRÉE${activity.length === 1 ? "" : "S"}`;
+  renderActivityList(document.querySelector("#history-list"), "Votre historique est vide");
+  renderActivityList(document.querySelector("#overview-activity"), "Aucune recherche pour le moment");
+}
+
+/* ---------- Toasts ---------- */
+function showToast(message, kind = "info") {
+  let host = document.querySelector("#toast-host");
+  if (!host) {
+    host = element("div", "toast-host");
+    host.id = "toast-host";
+    document.body.append(host);
+  }
+  const toast = element("div", `toast toast-${kind}`, message);
+  host.append(toast);
+  window.setTimeout(() => {
+    toast.classList.add("toast-out");
+    window.setTimeout(() => toast.remove(), 300);
+  }, 3200);
+}
+
+function confirmAction(message) {
+  const dialog = document.querySelector("#confirm-dialog");
+  if (!dialog?.showModal) return Promise.resolve(window.confirm(message));
+  document.querySelector("#confirm-dialog-message").textContent = message;
+  return new Promise((resolve) => {
+    const confirmButton = document.querySelector("#confirm-dialog-ok");
+    confirmButton.onclick = () => dialog.close("confirm");
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+    dialog.showModal();
+  });
+}
+
+/* ---------- Session / authentification ---------- */
+function renderSavedSearches() {
+  const list = document.querySelector("#saved-list");
+  const count = document.querySelector("#saved-count");
+  list.replaceChildren();
+  count.textContent = `${String(savedSearches.length).padStart(2, "0")} ENREGISTRÉE${savedSearches.length === 1 ? "" : "S"}`;
+  if (!currentUser) {
+    list.append(element("div", "saved-empty", "Connectez-vous pour conserver vos recherches sur votre compte."));
+    return;
+  }
+  if (!savedSearches.length) {
+    list.append(element("div", "saved-empty", "Aucune recherche enregistrée. Utilisez ☆ Enregistrer après avoir renseigné des critères."));
+    return;
+  }
+
+  for (const item of savedSearches) {
+    const row = element("article", "saved-item");
+    const label = element("strong", "saved-item-label", item.label);
+    const date = new Date(item.createdAt);
+    const meta = element("span", "saved-item-meta", Number.isNaN(date.getTime())
+      ? "Critères sauvegardés"
+      : `Enregistrée le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(date)}`);
+    const actions = element("div", "saved-item-actions");
+    const open = element("button", "text-button", "Ouvrir");
+    open.type = "button";
+    open.addEventListener("click", () => restoreSavedSearch(item));
+    const remove = element("button", "text-button saved-remove", "Supprimer");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      remove.disabled = true;
+      try {
+        const response = await apiRequest(`/api/saved/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error(response.payload?.error || "Suppression impossible.");
+        savedSearches = savedSearches.filter((saved) => saved.id !== item.id);
+        renderSavedSearches();
+        showToast("Recherche supprimée des éléments enregistrés.");
+      } catch (error) {
+        remove.disabled = false;
+        showToast(error.message || "Suppression impossible.", "error");
+      }
+    });
+    actions.append(open, remove);
+    row.append(label, meta, actions);
+    list.append(row);
+  }
+}
+
+async function loadSavedSearches() {
+  if (!currentUser) {
+    savedSearches = [];
+    renderSavedSearches();
+    return;
+  }
+  try {
+    const response = await apiRequest("/api/saved");
+    if (!response.ok) throw new Error(response.payload?.error || "Chargement des recherches enregistrées impossible.");
+    savedSearches = Array.isArray(response.payload?.saved) ? response.payload.saved : [];
+    renderSavedSearches();
+  } catch (error) {
+    showToast(error.message || "Chargement des recherches enregistrées impossible.", "error");
+  }
+}
+
+function restoreSavedSearch(item) {
+  const form = document.querySelector("#search-form");
+  form.reset();
+  document.querySelector("#search-field-filter").value = "";
+  for (const [key, value] of Object.entries(item.payload || {})) {
+    const field = form.elements.namedItem(key);
+    if (!field || !("value" in field)) continue;
+    if (field.type === "checkbox") field.checked = Boolean(value);
+    else field.value = String(value);
+  }
+  updateSearchControls();
+  showView("search");
+  showToast(`Critères « ${item.label} » restaurés. Lancez la recherche pour obtenir les résultats.`);
+}
+
+async function saveCurrentSearch() {
+  if (!currentUser) {
+    showToast("Connectez-vous pour enregistrer une recherche dans votre compte.", "error");
+    return;
+  }
+  const { payload, criteria } = collectSearchPayload();
+  if (!criteria) {
+    showToast("Renseignez au moins un critère avant d'enregistrer.", "error");
+    return;
+  }
+  const label = await promptSearchName(searchQueryTitle(payload));
+  if (label === null) return;
+  if (!label.trim()) {
+    showToast("Le nom de la recherche ne peut pas être vide.", "error");
+    return;
+  }
+  const button = document.querySelector("#save-search");
+  button.disabled = true;
+  try {
+    const response = await apiRequest("/api/saved", { method: "POST", body: { label, payload } });
+    if (!response.ok) throw new Error(response.payload?.error || "Enregistrement impossible.");
+    await loadSavedSearches();
+    showToast("Recherche enregistrée sur votre compte.");
+  } catch (error) {
+    showToast(error.message || "Enregistrement impossible.", "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function promptSearchName(defaultValue) {
+  const dialog = document.querySelector("#save-search-dialog");
+  const input = document.querySelector("#save-search-name");
+  if (!dialog?.showModal || !input) return Promise.resolve(window.prompt("Nom de cette recherche enregistrée :", defaultValue));
+  input.value = defaultValue || "";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "save" ? input.value : null), { once: true });
+    dialog.showModal();
+    input.focus();
+    input.select();
+  });
+}
+
+async function apiRequest(path, { method = "GET", body } = {}) {
+  startLoadingBar();
+  try {
+    const response = await fetch(path, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    return { status: response.status, ok: response.ok, payload };
+  } finally {
+    stopLoadingBar();
+  }
+}
+
+function applySession(user) {
+  currentUser = user;
+  const overlay = document.querySelector("#auth-overlay");
+  const navAdmin = document.querySelector("#nav-admin");
+  const userMenu = document.querySelector("#user-menu");
+  const avatar = document.querySelector("#user-menu-avatar");
+  const name = document.querySelector("#user-menu-name");
+  const dropdownAvatar = document.querySelector("#user-menu-dropdown-avatar");
+  const dropdownName = document.querySelector("#user-menu-dropdown-name");
+  const dropdownRole = document.querySelector("#user-menu-dropdown-role");
+  if (user) {
+    userMenu.classList.remove("hidden");
+    avatar.textContent = user.username.slice(0, 2).toUpperCase();
+    name.textContent = user.username;
+    dropdownAvatar.textContent = user.username.slice(0, 2).toUpperCase();
+    dropdownName.textContent = user.username;
+    dropdownRole.textContent = user.role === "admin" ? "ADMINISTRATEUR" : "MEMBRE";
+    overlay.classList.add("hidden");
+    navAdmin.classList.toggle("hidden", user.role !== "admin");
+    loadSavedSearches();
+  } else {
+    userMenu.classList.add("hidden");
+    overlay.classList.remove("hidden");
+    navAdmin.classList.add("hidden");
+    savedSearches = [];
+    renderSavedSearches();
+    if (document.querySelector("#view-admin").classList.contains("active")) showView("overview");
+  }
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  const loginTab = document.querySelector("#auth-tab-login");
+  const registerTab = document.querySelector("#auth-tab-register");
+  loginTab.classList.toggle("active", mode === "login");
+  registerTab.classList.toggle("active", mode === "register");
+  loginTab.setAttribute("aria-selected", mode === "login");
+  registerTab.setAttribute("aria-selected", mode === "register");
+  loginTab.tabIndex = mode === "login" ? 0 : -1;
+  registerTab.tabIndex = mode === "register" ? 0 : -1;
+  document.querySelector("#auth-form").setAttribute("aria-labelledby", mode === "login" ? loginTab.id : registerTab.id);
+  document.querySelector("#auth-submit .button-label").textContent = mode === "login" ? "Se connecter" : "Créer le compte";
+  document.querySelector("#auth-password").autocomplete = mode === "login" ? "current-password" : "new-password";
+  document.querySelector("#auth-bootstrap-field").classList.toggle("hidden", mode !== "register");
+  document.querySelector("#auth-error").classList.add("hidden");
+}
+
+async function refreshSession() {
+  try {
+    const { ok, payload } = await apiRequest("/api/auth/me");
+    if (!ok && payload?.error && !/session inactive|expirée/i.test(payload.error)) {
+      throw new Error(payload.error);
+    }
+    applySession(ok ? payload.user : null);
+  } catch (error) {
+    applySession(null);
+    showToast(error.message || "Impossible de vérifier la session.", "error");
+  }
+}
+
+async function loadAdminPanel() {
+  if (currentUser?.role !== "admin") return;
+  try {
+    const [statsResponse, usersResponse] = await Promise.all([
+      apiRequest("/api/admin/stats"),
+      apiRequest("/api/admin/users"),
+    ]);
+    if (!statsResponse.ok || !usersResponse.ok) {
+      const error = statsResponse.payload?.error || usersResponse.payload?.error || "Chargement de l'administration impossible.";
+      if (statsResponse.status === 401 || usersResponse.status === 401) applySession(null);
+      throw new Error(error);
+    }
+    document.querySelector("#admin-stat-users").textContent = String(statsResponse.payload.users ?? 0).padStart(2, "0");
+    document.querySelector("#admin-stat-searches").textContent = String(statsResponse.payload.searches ?? 0).padStart(2, "0");
+    document.querySelector("#admin-stat-saved").textContent = String(statsResponse.payload.savedSearches ?? 0).padStart(2, "0");
+
+    const body = document.querySelector("#admin-users-body");
+    const users = Array.isArray(usersResponse.payload.users) ? usersResponse.payload.users : [];
+    body.replaceChildren();
+    document.querySelector("#admin-empty").classList.toggle("hidden", users.length > 0);
+    document.querySelector(".admin-table-wrap").classList.toggle("hidden", users.length === 0);
+    for (const user of users) {
+      const row = element("tr");
+      const username = element("td", "admin-username", user.username);
+      const id = element("td", "admin-user-id", user.id);
+      const roleCell = element("td");
+      const role = element("select", "admin-role");
+      role.setAttribute("aria-label", `Rôle de ${user.username}`);
+      for (const [value, label] of [["admin", "Administrateur"], ["membre", "Membre"]]) {
+        const option = element("option", "", label);
+        option.value = value;
+        role.append(option);
+      }
+      role.value = user.role;
+      role.disabled = user.id === currentUser.id;
+      role.addEventListener("change", async () => {
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+            method: "PATCH",
+            body: { role: role.value },
+          });
+          if (!response.ok) throw new Error(response.payload?.error || "Modification du rôle impossible.");
+          showToast(`Rôle de ${user.username} mis à jour.`);
+          await loadAdminPanel();
+        } catch (error) {
+          showToast(error.message || "Modification du rôle impossible.", "error");
+          role.value = user.role;
+        }
+      });
+      roleCell.append(role);
+      const searchCount = element("td", "", String(user.searchCount ?? 0));
+      const created = new Date(user.createdAt);
+      const createdAt = element("td", "", Number.isNaN(created.getTime())
+        ? "—"
+        : new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(created));
+      const actions = element("td");
+      const remove = element("button", "text-button admin-delete", "Supprimer");
+      remove.type = "button";
+      remove.disabled = user.id === currentUser.id;
+      remove.addEventListener("click", async () => {
+        if (!await confirmAction(`Supprimer définitivement le compte « ${user.username} » ?`)) return;
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" });
+          if (!response.ok) throw new Error(response.payload?.error || "Suppression du compte impossible.");
+          showToast(`Compte ${user.username} supprimé.`);
+          await loadAdminPanel();
+        } catch (error) {
+          showToast(error.message || "Suppression du compte impossible.", "error");
+        }
+      });
+      actions.append(remove);
+      row.append(username, id, roleCell, searchCount, createdAt, actions);
+      body.append(row);
+    }
+  } catch (error) {
+    showToast(error.message || "Chargement de l'administration impossible.", "error");
+  }
+}
+
+const SETTINGS_KEY = "kikzxw.settings";
+const defaultSettings = {
+  sidebarCollapsed: false,
+  reducedMotion: false,
+  forceDark: true,
+  compactGrid: false,
+  toastSound: false,
+  autoSaveSearch: true,
+  resultsPerPage: 25,
+  searchDebounce: 300,
+  flexibleDefault: false,
+  includeMeta: false,
+  sortDefault: "relevance",
+  autoMap: true,
+  exportDefault: "json",
+};
+
+function getSettings() {
+  try {
+    const stored = window.localStorage.getItem(SETTINGS_KEY);
+    return stored ? { ...defaultSettings, ...JSON.parse(stored) } : { ...defaultSettings };
+  } catch {
+    return { ...defaultSettings };
+  }
+}
+
+function saveSettings(settings) {
+  try {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignored
+  }
+}
+
+function applySettings(settings) {
+  document.body.classList.toggle("sidebar-collapsed", settings.sidebarCollapsed);
+  sidebarToggle.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
+  document.body.classList.toggle("reduced-motion", settings.reducedMotion);
+  document.body.classList.toggle("force-dark", settings.forceDark);
+  document.body.classList.toggle("compact-grid", settings.compactGrid);
+}
+
+function loadSettings() {
+  if (!currentUser) return;
+  const settings = getSettings();
+  applySettings(settings);
+
+  document.querySelector("#profile-username").value = currentUser.username;
+  document.querySelector("#profile-role").value = currentUser.role === "admin" ? "Administrateur" : "Membre";
+  document.querySelector("#profile-avatar-large").textContent = currentUser.username.slice(0, 2).toUpperCase();
+  document.querySelector("#profile-email").value = currentUser.email || "";
+  document.querySelector("#profile-lang").value = settings.lang || "fr";
+  document.querySelector("#profile-tz").value = settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  document.querySelector("#profile-datefmt").value = settings.datefmt || "fr-FR";
+
+  document.querySelector("#pref-sidebar-collapsed").checked = settings.sidebarCollapsed;
+  document.querySelector("#pref-reduced-motion").checked = settings.reducedMotion;
+  document.querySelector("#pref-force-dark").checked = settings.forceDark;
+  document.querySelector("#pref-compact-grid").checked = settings.compactGrid;
+  document.querySelector("#pref-toast-sound").checked = settings.toastSound;
+  document.querySelector("#pref-auto-save-search").checked = settings.autoSaveSearch;
+  document.querySelector("#pref-results-per-page").value = String(settings.resultsPerPage);
+  document.querySelector("#pref-search-debounce").value = String(settings.searchDebounce);
+  document.querySelector("#pref-flexible-default").checked = settings.flexibleDefault;
+  document.querySelector("#pref-include-meta").checked = settings.includeMeta;
+  document.querySelector("#pref-sort-default").value = settings.sortDefault;
+  document.querySelector("#pref-auto-map").checked = settings.autoMap;
+  document.querySelector("#pref-export-default").value = settings.exportDefault;
+
+  document.querySelector("#sys-version").textContent = "1.0.0";
+  document.querySelector("#sys-build").textContent = new Date().toISOString().split("T")[0];
+  document.querySelector("#sys-env").textContent = window.location.hostname === "localhost" ? "local" : "production";
+  document.querySelector("#sys-ua").textContent = navigator.userAgent;
+  document.querySelector("#sys-storage").textContent = `${(JSON.stringify(localStorage).length / 1024).toFixed(1)} KB`;
+  document.querySelector("#sys-session").textContent = currentUser ? "Active" : "Inactive";
+
+  const tzSelect = document.querySelector("#profile-tz");
+  if (tzSelect.options.length === 0) {
+    const timeZones = typeof Intl.supportedValuesOf === "function"
+      ? Intl.supportedValuesOf("timeZone")
+      : [Intl.DateTimeFormat().resolvedOptions().timeZone, "UTC"];
+    [...new Set(timeZones)].forEach((tz) => {
+      const opt = document.createElement("option");
+      opt.value = tz;
+      opt.textContent = tz;
+      tzSelect.append(opt);
+    });
+  }
+  const preferredTimezone = settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if ([...tzSelect.options].some((option) => option.value === preferredTimezone)) tzSelect.value = preferredTimezone;
+}
+
+async function saveProfile() {
+  const form = document.querySelector("#profile-form");
+  const errorBox = document.querySelector("#profile-error");
+  const submit = document.querySelector("#profile-save");
+  const label = submit.querySelector(".button-label");
+
+  const email = document.querySelector("#profile-email").value.trim();
+  const lang = document.querySelector("#profile-lang").value;
+  const timezone = document.querySelector("#profile-tz").value;
+  const datefmt = document.querySelector("#profile-datefmt").value;
+
+  submit.disabled = true;
+  label.textContent = "Enregistrement…";
+  errorBox.classList.add("hidden");
+
+  try {
+    const response = await apiRequest("/api/user/profile", {
+      method: "PATCH",
+      body: { email, lang, timezone, datefmt },
+    });
+    if (!response.ok) throw new Error(response.payload?.error || "Mise à jour impossible.");
+
+    currentUser = { ...currentUser, email };
+    applySession(currentUser);
+    showToast("Profil mis à jour.");
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    submit.disabled = false;
+    label.textContent = "Enregistrer";
+  }
+}
+
+async function changePassword() {
+  const form = document.querySelector("#password-form");
+  const errorBox = document.querySelector("#password-error");
+  const submit = document.querySelector("#password-save");
+  const label = submit.querySelector(".button-label");
+
+  const currentPassword = document.querySelector("#current-password").value;
+  const newPassword = document.querySelector("#new-password").value;
+  const confirmPassword = document.querySelector("#confirm-password").value;
+
+  if (newPassword !== confirmPassword) {
+    errorBox.textContent = "Les mots de passe ne correspondent pas.";
+    errorBox.classList.remove("hidden");
+    return;
+  }
+
+  submit.disabled = true;
+  label.textContent = "Mise à jour…";
+  errorBox.classList.add("hidden");
+
+  try {
+    const response = await apiRequest("/api/user/password", {
+      method: "PATCH",
+      body: { currentPassword, newPassword },
+    });
+    if (!response.ok) throw new Error(response.payload?.error || "Changement impossible.");
+
+    form.reset();
+    showToast("Mot de passe modifié.");
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    submit.disabled = false;
+    label.textContent = "Mettre à jour";
+  }
+}
+
+function saveAllPreferences() {
+  const settings = getSettings();
+  settings.sidebarCollapsed = document.querySelector("#pref-sidebar-collapsed").checked;
+  settings.reducedMotion = document.querySelector("#pref-reduced-motion").checked;
+  settings.forceDark = document.querySelector("#pref-force-dark").checked;
+  settings.compactGrid = document.querySelector("#pref-compact-grid").checked;
+  settings.toastSound = document.querySelector("#pref-toast-sound").checked;
+  settings.autoSaveSearch = document.querySelector("#pref-auto-save-search").checked;
+  settings.resultsPerPage = Number(document.querySelector("#pref-results-per-page").value);
+  settings.searchDebounce = Number(document.querySelector("#pref-search-debounce").value);
+  settings.flexibleDefault = document.querySelector("#pref-flexible-default").checked;
+  settings.includeMeta = document.querySelector("#pref-include-meta").checked;
+  settings.sortDefault = document.querySelector("#pref-sort-default").value;
+  settings.autoMap = document.querySelector("#pref-auto-map").checked;
+  settings.exportDefault = document.querySelector("#pref-export-default").value;
+  settings.lang = document.querySelector("#profile-lang").value;
+  settings.timezone = document.querySelector("#profile-tz").value;
+  settings.datefmt = document.querySelector("#profile-datefmt").value;
+
+  saveSettings(settings);
+  applySettings(settings);
+  showToast("Préférences enregistrées.");
+}
+
+async function clearHistory() {
+  if (!await confirmAction("Effacer tout l'historique de cette session ?")) return;
+  activity.length = 0;
+  renderActivity();
+  showToast("Historique effacé.");
+}
+
+async function clearSaved() {
+  if (!await confirmAction("Supprimer toutes les recherches sauvegardées ?")) return;
+  savedSearches = [];
+  renderSavedSearches();
+  showToast("Recherches sauvegardées effacées.");
+}
+
+function exportData() {
+  const data = {
+    settings: getSettings(),
+    activity,
+    savedSearches,
+    exportedAt: new Date().toISOString(),
+    version: "1.0",
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `kikzxw-backup-${new Date().toISOString().split("T")[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast("Données exportées.");
+}
+
+function importData(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (data.settings) {
+        saveSettings({ ...defaultSettings, ...data.settings });
+      }
+      if (Array.isArray(data.activity)) {
+        activity.push(...data.activity);
+      }
+      if (Array.isArray(data.savedSearches)) {
+        savedSearches.push(...data.savedSearches);
+      }
+      renderActivity();
+      renderSavedSearches();
+      loadSettings();
+      showToast("Données importées avec succès.");
+    } catch {
+      showToast("Fichier invalide.", "error");
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function deleteAccount() {
+  if (!await confirmAction("⚠️ ATTENTION : Cette action est IRRÉVERSIBLE. Votre compte, vos recherches sauvegardées et votre historique seront supprimés.")) return;
+  if (!await confirmAction("Dernière confirmation : êtes-vous absolument sûr de vouloir supprimer votre compte ?")) return;
+
+  try {
+    const response = await apiRequest("/api/user/account", { method: "DELETE" });
+    if (!response.ok) throw new Error(response.payload?.error || "Suppression impossible.");
+    applySession(null);
+    setAuthMode("login");
+    showToast("Compte supprimé.");
+  } catch (error) {
+    showToast(error.message || "Suppression impossible.", "error");
+  }
+}
+
+document.querySelectorAll("[data-view]").forEach((button) => {
+  button.addEventListener("click", () => showView(button.dataset.view));
+});
+document.querySelectorAll("[data-go]").forEach((button) => {
+  button.addEventListener("click", () => showView(button.dataset.go));
+});
+sidebarToggle.addEventListener("click", () => {
+  setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
+});
+
+document.querySelector("#auth-tab-login").addEventListener("click", () => setAuthMode("login"));
+document.querySelector("#auth-tab-register").addEventListener("click", () => setAuthMode("register"));
+document.querySelector(".auth-tabs").addEventListener("keydown", (event) => {
+  const nextMode = event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "End"
+    ? "register"
+    : event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "Home"
+      ? "login"
+      : null;
+  if (!nextMode) return;
+  event.preventDefault();
+  setAuthMode(nextMode);
+  document.querySelector(nextMode === "login" ? "#auth-tab-login" : "#auth-tab-register").focus();
+});
+document.querySelector("#auth-reveal").addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  const password = document.querySelector("#auth-password");
+  const reveal = password.type === "password";
+  password.type = reveal ? "text" : "password";
+  button.setAttribute("aria-label", reveal ? "Masquer le mot de passe" : "Afficher le mot de passe");
+  button.textContent = reveal ? "●" : "○";
+});
+document.querySelector("#auth-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = document.querySelector("#auth-submit");
+  const label = submit.querySelector(".button-label");
+  const errorBox = document.querySelector("#auth-error");
+  const username = document.querySelector("#auth-username").value.trim();
+  const password = document.querySelector("#auth-password").value;
+  submit.disabled = true;
+  errorBox.classList.add("hidden");
+  label.textContent = authMode === "login" ? "Connexion…" : "Création…";
+  try {
+    const authBody = { username, password };
+    if (authMode === "register") {
+      const bootstrapToken = document.querySelector("#auth-bootstrap-token").value.trim();
+      if (bootstrapToken) authBody.bootstrapToken = bootstrapToken;
+    }
+    const response = await apiRequest(`/api/auth/${authMode === "login" ? "login" : "register"}`, {
+      method: "POST",
+      body: authBody,
+    });
+    if (!response.ok || !response.payload?.user) {
+      throw new Error(response.payload?.error || "Le serveur a refusé la demande d'authentification.");
+    }
+    applySession(response.payload.user);
+    form.reset();
+    showToast(authMode === "login" ? "Connexion réussie." : "Compte créé, bienvenue sur KIKZXW.");
+    if (response.payload.firstUser) showToast("Premier compte créé : rôle administrateur.");
+  } catch (error) {
+    errorBox.textContent = error.message || "Impossible de joindre le serveur d'authentification.";
+    errorBox.classList.remove("hidden");
+  } finally {
+    submit.disabled = false;
+    label.textContent = authMode === "login" ? "Se connecter" : "Créer le compte";
+  }
+});
+document.querySelector("#menu-logout").addEventListener("click", async () => {
+  const button = document.querySelector("#menu-logout");
+  button.disabled = true;
+  try {
+    const response = await apiRequest("/api/auth/logout", { method: "POST" });
+    if (!response.ok) throw new Error(response.payload?.error || "La déconnexion a échoué.");
+    applySession(null);
+    setAuthMode("login");
+    showToast("Vous êtes déconnecté.");
+    closeUserMenu();
+  } catch (error) {
+    showToast(error.message || "Impossible de fermer la session.", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function toggleUserMenu() {
+  const isOpen = userMenuDropdown.classList.toggle("hidden");
+  userMenuTrigger.setAttribute("aria-expanded", String(!isOpen));
+}
+
+function closeUserMenu() {
+  userMenuDropdown.classList.add("hidden");
+  userMenuTrigger.setAttribute("aria-expanded", "false");
+}
+
+userMenuTrigger.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleUserMenu();
+});
+
+document.addEventListener("click", (event) => {
+  if (!userMenu.contains(event.target)) closeUserMenu();
+});
+
+userMenuDropdown.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeUserMenu();
+    userMenuTrigger.focus();
+  }
+});
+
+document.querySelector("#admin-refresh").addEventListener("click", loadAdminPanel);
+document.querySelector("#save-search").addEventListener("click", saveCurrentSearch);
+document.querySelector("#result-filter").addEventListener("input", applyResultFilter);
+document.querySelector("#save-search-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = document.querySelector("#save-search-name");
+  if (!input.value.trim()) {
+    input.focus();
+    return;
+  }
+  document.querySelector("#save-search-dialog").close("save");
+});
+document.querySelector("#copy-results").addEventListener("click", copyResultsJson);
+document.querySelector("#export-json").addEventListener("click", exportResultsJson);
+document.querySelector("#export-csv").addEventListener("click", exportResultsCsv);
+
+const avatarPalette = ["#54d18a", "#60a5fa", "#c084fc", "#f5c542", "#fb7185", "#2dd4bf"];
+function applyAvatarTone() {
+  let tone = 0;
+  try { tone = Number(window.localStorage.getItem("kikzxw.avatar-tone")) || 0; } catch { /* stockage indisponible */ }
+  const color = avatarPalette[((tone % avatarPalette.length) + avatarPalette.length) % avatarPalette.length];
+  document.querySelectorAll("#user-menu-avatar, #user-menu-dropdown-avatar, #profile-avatar-large").forEach((avatar) => {
+    avatar.style.color = color;
+    avatar.style.borderColor = `${color}88`;
+    avatar.style.backgroundColor = `${color}18`;
+  });
+}
+document.querySelector("#change-avatar").addEventListener("click", () => {
+  let tone = 0;
+  try { tone = Number(window.localStorage.getItem("kikzxw.avatar-tone")) || 0; } catch { /* stockage indisponible */ }
+  try { window.localStorage.setItem("kikzxw.avatar-tone", String((tone + 1) % avatarPalette.length)); } catch { /* préférence temporaire */ }
+  applyAvatarTone();
+});
+applyAvatarTone();
+document.addEventListener("click", (event) => {
+  const closeButton = event.target.closest("[data-dialog-close]");
+  if (!closeButton) return;
+  const dialog = document.getElementById(closeButton.dataset.dialogClose);
+  if (dialog?.open) dialog.close("cancel");
+});
+
+document.querySelector("#profile-form").addEventListener("submit", (e) => { e.preventDefault(); saveProfile(); });
+document.querySelector("#password-form").addEventListener("submit", (e) => { e.preventDefault(); changePassword(); });
+
+document.querySelectorAll("#pref-sidebar-collapsed, #pref-reduced-motion, #pref-force-dark, #pref-compact-grid, #pref-toast-sound, #pref-auto-save-search, #pref-flexible-default, #pref-include-meta, #pref-auto-map").forEach((el) => {
+  el.addEventListener("change", saveAllPreferences);
+});
+document.querySelectorAll("#pref-results-per-page, #pref-search-debounce, #pref-sort-default, #pref-export-default, #profile-lang, #profile-tz, #profile-datefmt").forEach((el) => {
+  el.addEventListener("change", saveAllPreferences);
+});
+
+document.querySelector("#clear-history").addEventListener("click", clearHistory);
+document.querySelector("#clear-saved").addEventListener("click", clearSaved);
+document.querySelector("#export-data").addEventListener("click", exportData);
+document.querySelector("#import-data").addEventListener("change", (e) => { if (e.target.files[0]) importData(e.target.files[0]); });
+document.querySelector("#delete-account").addEventListener("click", deleteAccount);
+
+refreshSession();
+initScrollToTop();
+
+document.querySelector("#search-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const { payload, criteria } = collectSearchPayload();
+  const errorBox = document.querySelector("#search-form-error");
+  if (!criteria) {
+    errorBox.textContent = "Renseignez au moins un critère de recherche (l'option flexible ne compte pas comme critère).";
+    errorBox.classList.remove("hidden");
+    return;
+  }
+  const birthError = birthDateError(payload);
+  if (birthError) {
+    errorBox.textContent = birthError;
+    errorBox.classList.remove("hidden");
+    return;
+  }
+  errorBox.classList.add("hidden");
+  runSearch(payload, document.querySelector("#search-submit"));
+});
+
+renderSearchForm();
+document.querySelector("#search-field-filter").addEventListener("input", updateSearchControls);
+document.querySelector("#search-fields").addEventListener("input", updateSearchControls);
+document.querySelector("#search-fields").addEventListener("change", updateSearchControls);
+document.querySelector("#search-form").addEventListener("reset", () => {
+  window.setTimeout(updateSearchControls, 0);
+});
+updateSearchControls();
+renderActivity();
+const initialSettings = getSettings();
+applySettings(initialSettings);
+
+const clockTime = document.querySelector("#peaclock-time");
+const clockDate = document.querySelector("#peaclock-date");
+const clockFormatButton = document.querySelector("#peaclock-format");
+let clock24Hour = true;
+const updatePeaclock = () => {
+  const now = new Date();
+  clockTime.dateTime = now.toISOString();
+  clockTime.textContent = new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: !clock24Hour,
+  }).format(now);
+  clockDate.textContent = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  }).format(now);
+};
+clockFormatButton.addEventListener("click", () => {
+  clock24Hour = !clock24Hour;
+  clockFormatButton.textContent = clock24Hour ? "24 H" : "12 H";
+  clockFormatButton.setAttribute("aria-pressed", String(!clock24Hour));
+  updatePeaclock();
+});
+updatePeaclock();
+window.setInterval(updatePeaclock, 1000);
+
+const matrixCanvas = document.querySelector("#matrix-canvas");
+const matrixContext = matrixCanvas?.getContext("2d");
+const matrixScreen = matrixCanvas?.parentElement;
+const matrixCharacters = "01アイウエオカキクケコサシスセソタチツテトナニヌネノ";
+let matrixColumns = [];
+let matrixFrame = 0;
+let matrixVisible = true;
+const motionIsReduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  || document.body.classList.contains("reduced-motion");
+const resizeMatrix = () => {
+  if (!matrixCanvas || !matrixContext || !matrixScreen) return;
+  const bounds = matrixScreen.getBoundingClientRect();
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  matrixCanvas.width = Math.max(1, Math.floor(bounds.width * ratio));
+  matrixCanvas.height = Math.max(1, Math.floor(bounds.height * ratio));
+  matrixContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+  matrixColumns = Array.from({ length: Math.ceil(bounds.width / 15) }, () => Math.random() * -24);
+};
+const drawMatrix = () => {
+  if (!matrixVisible || document.hidden || !matrixContext || !matrixScreen) {
+    matrixFrame = 0;
+    return;
+  }
+  const width = matrixScreen.clientWidth;
+  const height = matrixScreen.clientHeight;
+  matrixContext.fillStyle = "rgba(4, 12, 7, .12)";
+  matrixContext.fillRect(0, 0, width, height);
+  matrixContext.font = "12px monospace";
+  matrixContext.fillStyle = "#63d888";
+  matrixColumns.forEach((row, index) => {
+    const char = matrixCharacters[Math.floor(Math.random() * matrixCharacters.length)];
+    matrixContext.fillText(char, index * 15, row * 15);
+    if (row * 15 > height && Math.random() > .975) matrixColumns[index] = -2;
+    else matrixColumns[index] += .48;
+  });
+  matrixFrame = motionIsReduced() ? 0 : window.setTimeout(drawMatrix, 70);
+};
+const startMatrix = () => {
+  if (matrixFrame || !matrixVisible || document.hidden || !matrixContext) return;
+  matrixFrame = window.setTimeout(drawMatrix, 30);
+};
+if (matrixContext && matrixScreen) {
+  resizeMatrix();
+  startMatrix();
+  if ("ResizeObserver" in window) new ResizeObserver(() => { resizeMatrix(); startMatrix(); }).observe(matrixScreen);
+}
+if (matrixContext && matrixScreen && "IntersectionObserver" in window) {
+  new IntersectionObserver(([entry]) => {
+    matrixVisible = entry.isIntersecting;
+    if (!matrixVisible) {
+      window.clearTimeout(matrixFrame);
+      matrixFrame = 0;
+    } else startMatrix();
+  }).observe(matrixScreen);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    window.clearTimeout(matrixFrame);
+    matrixFrame = 0;
+  } else startMatrix();
+});
+
+document.querySelector("#pref-reduced-motion").addEventListener("change", () => {
+  window.clearTimeout(matrixFrame);
+  matrixFrame = 0;
+  startMatrix();
+});

@@ -2013,8 +2013,14 @@ h3 { color: var(--text-dim); font: 600 13px/1.4 var(--display); }
   transform: scaleX(0);
   transform-origin: left center;
   pointer-events: none;
-  animation: loading-pulse 1.4s ease-in-out infinite;
+  opacity: 0;
+  animation: none;
+  transition: opacity .2s ease;
   box-shadow: 0 0 8px var(--accent-bright);
+}
+.loading-bar.active {
+  opacity: 1;
+  animation: loading-pulse 1.4s ease-in-out infinite;
 }
 .loading-bar.hidden { display: none; }
 .loading-bar.complete {
@@ -2045,6 +2051,7 @@ h3 { color: var(--text-dim); font: 600 13px/1.4 var(--display); }
   box-shadow: 0 4px 14px #00000055;
   backdrop-filter: blur(8px);
 }
+.scroll-top-btn[hidden] { display: none; }
 .scroll-top-btn.visible {
   opacity: 1;
   pointer-events: auto;
