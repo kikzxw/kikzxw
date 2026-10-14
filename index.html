@@ -3,19 +3,47 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#080d0b">
-    <meta name="description" content="KIKZXW — espace privé de recherche multicritère et d'analyse OSINT.">
+
+    <!-- ── SEO ───────────────────────────────────────────────── -->
     <title>KIKZXW — Intelligence de recherche</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <meta name="description" content="KIKZXW — espace privé de recherche multicritère et d'analyse OSINT.">
+    <meta name="robots" content="noindex, nofollow">
+
+    <!-- ── Theme color ───────────────────────────────────────── -->
+    <meta name="theme-color" content="#080d0b" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#080d0b" media="(prefers-color-scheme: light)">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="KIKZXW">
+
+    <!-- ── Open Graph / Social ───────────────────────────────── -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="KIKZXW — Intelligence de recherche">
+    <meta property="og:description" content="Espace privé de recherche multicritère et d'analyse OSINT.">
+    <meta property="og:locale" content="fr_FR">
+    <meta property="og:site_name" content="KIKZXW OSINT">
+
+    <!-- ── Twitter Card ──────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="KIKZXW — Intelligence de recherche">
+    <meta name="twitter:description" content="Espace privé de recherche multicritère et d'analyse OSINT.">
+
+    <!-- ── Favicon SVG inline ────────────────────────────────── -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2354d18a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10' cy='10' r='6'/%3E%3Cpath d='M16 16 22 22'/%3E%3Cpath d='M7 10h6M10 7v6'/%3E%3C/svg%3E">
+
+    <!-- ── PWA Manifest ──────────────────────────────────────── -->
+    <link rel="manifest" href="/manifest.json">
+
     <link rel="stylesheet" href="/styles.css">
     <script src="/app.js" defer></script>
   </head>
   <body>
+    <!-- ── Indicateur de chargement global ───────────────────── -->
+    <div class="loading-bar" id="loading-bar" aria-hidden="true"></div>
+
     <a class="skip-link" href="#main-content">Aller au contenu principal</a>
     <div class="app-shell">
-      <aside class="sidebar" id="app-sidebar">
+      <aside class="sidebar" id="app-sidebar" aria-label="Barre latérale de navigation">
         <a class="brand" href="/" aria-label="KIKZXW, accueil">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6"/><path d="M16 16 22 22"/><path d="M7 10h6M10 7v6"/></svg>
@@ -40,7 +68,7 @@
       </aside>
 
       <main class="main" id="main-content" tabindex="-1">
-        <header class="topbar">
+        <header class="topbar" role="banner">
           <div class="breadcrumbs"><span>WORKSPACE</span><b>/</b><strong id="breadcrumb-current">Tableau de bord</strong></div>
           <div class="topbar-right">
             <span class="api-status"><i></i> Console active</span>
@@ -69,7 +97,8 @@
           </div>
         </header>
 
-        <section class="view active" id="view-overview">
+        <!-- ── Vue : Tableau de bord ──────────────────────────── -->
+        <section class="view active" id="view-overview" aria-label="Tableau de bord">
           <section class="welcome-hero" aria-labelledby="welcome-title">
             <div class="mouse-glow"></div>
             <div class="welcome-copy" data-depth="1">
@@ -109,7 +138,7 @@
           <div class="overview-metrics">
             <article class="stat-card search-total-card">
               <div class="stat-top"><span>RECHERCHES CETTE SESSION</span><span class="stat-icon red" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span></div>
-              <div class="stat-value" id="stat-searches">00</div>
+              <div class="stat-value" id="stat-searches" aria-live="polite" aria-atomic="true">00</div>
               <div class="stat-foot">Historique éphémère, conservé dans cet onglet uniquement.</div>
             </article>
             <section class="panel search-chart-panel" aria-labelledby="search-chart-title">
@@ -122,26 +151,27 @@
             </section>
           </div>
           <div class="content-grid">
-            <section class="panel activity-panel">
-              <div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Historique</h2></div><button class="text-button" data-go="history">Tout voir <span>→</span></button></div>
-              <div id="overview-activity" class="activity-list"></div>
+            <section class="panel activity-panel" aria-labelledby="activity-title">
+              <div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2 id="activity-title">Historique</h2></div><button class="text-button" data-go="history">Tout voir <span>→</span></button></div>
+              <div id="overview-activity" class="activity-list" aria-live="polite" aria-label="Activité récente"></div>
             </section>
           </div>
-          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Historique éphémère, supprimé au rechargement de l'onglet</span></footer>
+          <footer class="page-footer" role="contentinfo"><span>KIKZXW · OSINT</span><span>Historique éphémère, supprimé au rechargement de l'onglet</span></footer>
         </section>
 
-        <section class="view" id="view-search">
+        <!-- ── Vue : Recherche ────────────────────────────────── -->
+        <section class="view" id="view-search" aria-label="Recherche multicritère">
           <div class="page-intro" data-depth="1"><div class="eyebrow"><span class="live-pulse"></span> RECHERCHE MULTICRITÈRE</div><h1>Recherche<span class="red-dot">.</span></h1><p class="subheading">Renseignez un ou plusieurs critères et consultez les résultats renvoyés par le serveur.</p></div>
-          <section class="panel search-panel">
-            <div class="panel-heading"><div><span class="section-kicker">CRITÈRES DE RECHERCHE</span><h2>Affinez votre recherche</h2></div><span class="panel-count">25 CRITÈRES DISPONIBLES</span></div>
+          <section class="panel search-panel" aria-labelledby="search-panel-title">
+            <div class="panel-heading"><div><span class="section-kicker">CRITÈRES DE RECHERCHE</span><h2 id="search-panel-title">Affinez votre recherche</h2></div><span class="panel-count">25 CRITÈRES DISPONIBLES</span></div>
             <div class="schema-note"><span>i</span><p>Renseignez au moins un critère : les champs vides ne sont jamais envoyés au serveur. La recherche est stricte par défaut — cochez « Recherche approximative » pour élargir les correspondances.</p></div>
-            <form id="search-form">
+            <form id="search-form" novalidate>
               <div class="search-toolbar">
                 <label class="field search-filter"><span>FILTRER LES CHAMPS</span><input id="search-field-filter" type="search" placeholder="Ex. e-mail, ville, identifiant…" autocomplete="off"></label>
-                <div class="search-toolbar-actions"><span class="criteria-count" id="search-criteria-count" aria-live="polite">0 critère renseigné</span><button class="text-button search-reset" type="reset">Tout effacer</button></div>
+                <div class="search-toolbar-actions"><span class="criteria-count" id="search-criteria-count" aria-live="polite" role="status">0 critère renseigné</span><button class="text-button search-reset" type="reset">Tout effacer</button></div>
               </div>
-              <div id="search-fields" class="field-groups"></div>
-              <div id="search-form-error" class="result-error hidden" role="alert"></div>
+              <div id="search-fields" class="field-groups" aria-label="Critères de recherche"></div>
+              <div id="search-form-error" class="result-error hidden" role="alert" aria-live="assertive"></div>
               <div class="form-divider"></div>
               <div class="form-actions">
                 <div class="form-actions-info">
@@ -150,15 +180,15 @@
                   <button class="text-button save-search" type="button" id="save-search" title="Enregistrer les critères pour réutilisation rapide">☆ Enregistrer</button>
                 </div>
                 <div class="form-actions-main">
-                  <div id="search-pager" class="search-pager hidden" aria-label="Pagination des résultats"></div>
+                  <div id="search-pager" class="search-pager hidden" aria-label="Pagination des résultats" role="navigation"></div>
                   <button class="button button-primary" type="submit" id="search-submit"><span class="button-label">Lancer la recherche</span><span>→</span></button>
                 </div>
               </div>
             </form>
           </section>
-          <section class="panel result-panel hidden" id="search-result-panel">
+          <section class="panel result-panel hidden" id="search-result-panel" aria-labelledby="search-result-title" aria-live="polite">
             <div class="panel-heading"><div><span class="section-kicker">RÉSULTATS DE LA RECHERCHE</span><h2 id="search-result-title">Résultats de la recherche</h2></div><span class="result-status" id="search-result-status" role="status" aria-live="polite"></span></div>
-            <div id="search-result-summary" class="result-summary"></div>
+            <div id="search-result-summary" class="result-summary" aria-live="polite"></div>
             <div class="result-toolbar" id="result-toolbar">
               <label class="field search-filter result-filter"><span>FILTRER LES RÉSULTATS AFFICHÉS</span><input id="result-filter" type="search" placeholder="Ex. Paris, @mail…" autocomplete="off"></label>
               <div class="result-toolbar-actions">
@@ -168,29 +198,32 @@
               </div>
             </div>
             <div class="result-map-slot" id="search-result-map"></div>
-            <div class="result-sections" id="search-result-sections"></div>
+            <div class="result-sections" id="search-result-sections" aria-live="polite" aria-label="Résultats de la recherche"></div>
           </section>
-          <section class="panel saved-panel" id="saved-panel">
+          <section class="panel saved-panel" id="saved-panel" aria-labelledby="saved-panel-title">
             <div class="panel-heading">
-              <div><span class="section-kicker">RACCOURCIS</span><h2>Recherches enregistrées</h2></div>
-              <span class="panel-count" id="saved-count">00 ENREGISTRÉE</span>
+              <div><span class="section-kicker">RACCOURCIS</span><h2 id="saved-panel-title">Recherches enregistrées</h2></div>
+              <span class="panel-count" id="saved-count" aria-live="polite">00 ENREGISTRÉE</span>
             </div>
-            <div id="saved-list" class="saved-list"></div>
+            <div id="saved-list" class="saved-list" aria-live="polite" aria-label="Liste des recherches enregistrées"></div>
           </section>
-          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Historique local à l’onglet · enregistrement explicite des critères</span></footer>
+          <footer class="page-footer" role="contentinfo"><span>KIKZXW · OSINT</span><span>Historique local à l'onglet · enregistrement explicite des critères</span></footer>
         </section>
 
-        <section class="view" id="view-history">
+        <!-- ── Vue : Historique ───────────────────────────────── -->
+        <section class="view" id="view-history" aria-label="Historique de recherche">
           <div class="page-intro" data-depth="1"><div class="eyebrow">JOURNAL ÉPHÉMÈRE</div><h1>Historique de recherche<span class="red-dot">.</span></h1><p class="subheading">Recherches réalisées dans l'onglet actuel uniquement.</p></div>
-          <section class="panel history-panel"><div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2>Recherches effectuées</h2></div><span class="panel-count" id="history-count">00 ENTRÉE</span></div><div id="history-list" class="activity-list"></div></section>
-          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>L'historique est supprimé au rechargement de l'onglet</span></footer>
+          <section class="panel history-panel" aria-labelledby="history-panel-title"><div class="panel-heading"><div><span class="section-kicker">SESSION ACTUELLE</span><h2 id="history-panel-title">Recherches effectuées</h2></div><span class="panel-count" id="history-count" aria-live="polite">00 ENTRÉE</span></div><div id="history-list" class="activity-list" aria-live="polite" aria-label="Historique des recherches"></div></section>
+          <footer class="page-footer" role="contentinfo"><span>KIKZXW · OSINT</span><span>L'historique est supprimé au rechargement de l'onglet</span></footer>
         </section>
-        <section class="view" id="view-settings">
+
+        <!-- ── Vue : Paramètres ───────────────────────────────── -->
+        <section class="view" id="view-settings" aria-label="Paramètres">
           <div class="page-intro" data-depth="1"><div class="eyebrow">CONFIGURATION</div><h1>Paramètres<span class="red-dot">.</span></h1><p class="subheading">Personnalisez votre expérience et gérez votre compte.</p></div>
           
-          <section class="panel settings-panel" id="settings-profile">
-            <div class="panel-heading"><div><span class="section-kicker">PROFIL</span><h2>Informations du compte</h2></div></div>
-            <form id="profile-form" class="settings-form">
+          <section class="panel settings-panel" id="settings-profile" aria-labelledby="settings-profile-title">
+            <div class="panel-heading"><div><span class="section-kicker">PROFIL</span><h2 id="settings-profile-title">Informations du compte</h2></div></div>
+            <form id="profile-form" class="settings-form" novalidate>
               <div class="profile-avatar-section">
                 <div class="profile-avatar-large" id="profile-avatar-large">?</div>
                 <button type="button" class="text-button" id="change-avatar">Changer l'avatar</button>
@@ -207,26 +240,27 @@
                 <label class="field"><span>FUSEAU HORAIRE</span><select id="profile-tz" name="timezone"></select></label>
                 <label class="field"><span>FORMAT DE DATE</span><select id="profile-datefmt" name="datefmt"><option value="fr-FR">JJ/MM/AAAA</option><option value="ISO">AAAA-MM-JJ</option><option value="US">MM/JJ/AAAA</option></select></label>
               </div>
-              <div id="profile-error" class="result-error hidden" role="alert"></div>
+              <div id="profile-error" class="result-error hidden" role="alert" aria-live="assertive"></div>
               <div class="form-actions">
                 <button class="button button-primary" type="submit" id="profile-save"><span class="button-label">Enregistrer</span><span>→</span></button>
               </div>
             </form>
             <div class="form-divider"></div>
-            <form id="password-form" class="settings-form">
-              <h3 style="margin: 0 0 16px; font-size: 13px; font-weight: 600;">Changer le mot de passe</h3>
+            <!-- h3 sans style inline — classe settings-form h3 définie dans styles.css -->
+            <form id="password-form" class="settings-form" novalidate>
+              <h3 class="settings-section-heading">Changer le mot de passe</h3>
               <label class="field"><span>MOT DE PASSE ACTUEL</span><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required minlength="8"></label>
               <label class="field"><span>NOUVEAU MOT DE PASSE</span><input id="new-password" name="newPassword" type="password" autocomplete="new-password" required minlength="8" maxlength="200"></label>
               <label class="field"><span>CONFIRMER</span><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8"></label>
-              <div id="password-error" class="result-error hidden" role="alert"></div>
+              <div id="password-error" class="result-error hidden" role="alert" aria-live="assertive"></div>
               <div class="form-actions">
                 <button class="button button-primary" type="submit" id="password-save"><span class="button-label">Mettre à jour</span><span>→</span></button>
               </div>
             </form>
           </section>
 
-          <section class="panel settings-panel" id="settings-preferences">
-            <div class="panel-heading"><div><span class="section-kicker">PRÉFÉRENCES</span><h2>Interface et comportement</h2></div></div>
+          <section class="panel settings-panel" id="settings-preferences" aria-labelledby="settings-preferences-title">
+            <div class="panel-heading"><div><span class="section-kicker">PRÉFÉRENCES</span><h2 id="settings-preferences-title">Interface et comportement</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item">
                 <div class="setting-info">
@@ -287,8 +321,8 @@
             </div>
           </section>
 
-          <section class="panel settings-panel" id="settings-search">
-            <div class="panel-heading"><div><span class="section-kicker">RECHERCHE</span><h2>Comportement par défaut</h2></div></div>
+          <section class="panel settings-panel" id="settings-search" aria-labelledby="settings-search-title">
+            <div class="panel-heading"><div><span class="section-kicker">RECHERCHE</span><h2 id="settings-search-title">Comportement par défaut</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item">
                 <div class="setting-info">
@@ -328,8 +362,8 @@
             </div>
           </section>
 
-          <section class="panel settings-panel" id="settings-data">
-            <div class="panel-heading"><div><span class="section-kicker">DONNÉES</span><h2>Gestion des données locales</h2></div></div>
+          <section class="panel settings-panel" id="settings-data" aria-labelledby="settings-data-title">
+            <div class="panel-heading"><div><span class="section-kicker">DONNÉES</span><h2 id="settings-data-title">Gestion des données locales</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item">
                 <div class="setting-info">
@@ -357,20 +391,22 @@
                   <strong>Importer des données</strong>
                   <small>Restaurer depuis un fichier JSON</small>
                 </div>
-                <label class="field" style="max-width: 200px;"><span>FICHIER</span><input type="file" id="import-data" accept=".json" style="height: 38px; padding: 0;"></label>
+                <!-- file input sans style inline — classe file-input définie dans styles.css -->
+                <label class="file-input"><span>FICHIER</span><input type="file" id="import-data" accept=".json"></label>
               </div>
               <div class="setting-item danger-zone">
                 <div class="setting-info">
                   <strong>Zone de danger</strong>
                   <small>Actions irréversibles</small>
                 </div>
-                <button class="button" type="button" id="delete-account" style="border-color: #7a2935; background: #230e12; color: #ff9aa4;">Supprimer mon compte</button>
+                <!-- button sans style inline — classe button-danger définie dans styles.css -->
+                <button class="button button-danger" type="button" id="delete-account">Supprimer mon compte</button>
               </div>
             </div>
           </section>
 
-          <section class="panel settings-panel" id="settings-about">
-            <div class="panel-heading"><div><span class="section-kicker">À PROPOS</span><h2>Informations système</h2></div></div>
+          <section class="panel settings-panel" id="settings-about" aria-labelledby="settings-about-title">
+            <div class="panel-heading"><div><span class="section-kicker">À PROPOS</span><h2 id="settings-about-title">Informations système</h2></div></div>
             <div class="settings-grid">
               <div class="setting-item info-item">
                 <div class="setting-info"><strong>Version</strong><small>KIKZXW v1.0</small></div>
@@ -386,7 +422,8 @@
               </div>
               <div class="setting-item info-item">
                 <div class="setting-info"><strong>User Agent</strong><small>Navigateur</small></div>
-                <span class="info-value" id="sys-ua" style="max-width: 300px; word-break: break-all;">—</span>
+                <!-- span sans style inline — classe info-value-ua définie dans styles.css -->
+                <span class="info-value info-value-ua" id="sys-ua">—</span>
               </div>
               <div class="setting-item info-item">
                 <div class="setting-info"><strong>Stockage disponible</strong><small>Espace localStorage</small></div>
@@ -399,30 +436,33 @@
             </div>
           </section>
           
-          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Les préférences sont stockées localement dans le navigateur</span></footer>
+          <footer class="page-footer" role="contentinfo"><span>KIKZXW · OSINT</span><span>Les préférences sont stockées localement dans le navigateur</span></footer>
         </section>
-        <section class="view" id="view-admin">
+
+        <!-- ── Vue : Administration ───────────────────────────── -->
+        <section class="view" id="view-admin" aria-label="Administration">
           <div class="page-intro" data-depth="1"><div class="eyebrow">GESTION</div><h1>Administration<span class="red-dot">.</span></h1><p class="subheading">Comptes, rôles et statistiques de la plateforme.</p></div>
           <div class="overview-metrics admin-metrics">
-            <article class="stat-card"><div class="stat-top"><span>COMPTES</span><span class="stat-icon red" aria-hidden="true">●</span></div><div class="stat-value" id="admin-stat-users">00</div><div class="stat-foot">Utilisateurs enregistrés.</div></article>
-            <article class="stat-card"><div class="stat-top"><span>RECHERCHES TOTALES</span><span class="stat-icon red" aria-hidden="true">⌕</span></div><div class="stat-value" id="admin-stat-searches">00</div><div class="stat-foot">Recherches lancées par tous les comptes.</div></article>
-            <article class="stat-card"><div class="stat-top"><span>RACCOURCIS</span><span class="stat-icon red" aria-hidden="true">★</span></div><div class="stat-value" id="admin-stat-saved">00</div><div class="stat-foot">Recherches enregistrées.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>COMPTES</span><span class="stat-icon red" aria-hidden="true">●</span></div><div class="stat-value" id="admin-stat-users" aria-live="polite">00</div><div class="stat-foot">Utilisateurs enregistrés.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>RECHERCHES TOTALES</span><span class="stat-icon red" aria-hidden="true">⌕</span></div><div class="stat-value" id="admin-stat-searches" aria-live="polite">00</div><div class="stat-foot">Recherches lancées par tous les comptes.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>RACCOURCIS</span><span class="stat-icon red" aria-hidden="true">★</span></div><div class="stat-value" id="admin-stat-saved" aria-live="polite">00</div><div class="stat-foot">Recherches enregistrées.</div></article>
           </div>
-          <section class="panel admin-panel">
-            <div class="panel-heading"><div><span class="section-kicker">UTILISATEURS</span><h2>Comptes et rôles</h2></div><button class="text-button" id="admin-refresh" type="button">Rafraîchir <span>↻</span></button></div>
+          <section class="panel admin-panel" aria-labelledby="admin-panel-title">
+            <div class="panel-heading"><div><span class="section-kicker">UTILISATEURS</span><h2 id="admin-panel-title">Comptes et rôles</h2></div><button class="text-button" id="admin-refresh" type="button">Rafraîchir <span>↻</span></button></div>
             <div class="admin-table-wrap">
               <table class="admin-table">
-                <thead><tr><th>UTILISATEUR</th><th>ID</th><th>RÔLE</th><th>RECH.</th><th>CRÉÉ LE</th><th>ACTIONS</th></tr></thead>
-                <tbody id="admin-users-body"></tbody>
+                <thead><tr><th scope="col">UTILISATEUR</th><th scope="col">ID</th><th scope="col">RÔLE</th><th scope="col">RECH.</th><th scope="col">CRÉÉ LE</th><th scope="col">ACTIONS</th></tr></thead>
+                <tbody id="admin-users-body" aria-live="polite"></tbody>
               </table>
             </div>
-            <div id="admin-empty" class="empty-state hidden"><span class="empty-symbol">⚙</span><strong>Aucun compte</strong></div>
+            <div id="admin-empty" class="empty-state hidden" aria-live="polite"><span class="empty-symbol">⚙</span><strong>Aucun compte</strong></div>
           </section>
-          <footer class="page-footer"><span>KIKZXW · OSINT</span><span>Seuls les administrateurs peuvent modifier les rôles</span></footer>
+          <footer class="page-footer" role="contentinfo"><span>KIKZXW · OSINT</span><span>Seuls les administrateurs peuvent modifier les rôles</span></footer>
         </section>
       </main>
     </div>
 
+    <!-- ── Auth overlay ───────────────────────────────────────── -->
     <div class="auth-overlay hidden" id="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="auth-title">
       <div class="auth-card">
         <div class="auth-brand">
@@ -431,19 +471,70 @@
           </span>
           <div><strong id="auth-title">KIKZXW</strong><small>RECHERCHE OSINT · ACCÈS COMPTES</small></div>
         </div>
-        <div class="auth-tabs" role="tablist" aria-label="Mode d’authentification">
+        <div class="auth-tabs" role="tablist" aria-label="Mode d'authentification">
           <button class="auth-tab active" id="auth-tab-login" type="button" role="tab" aria-selected="true" aria-controls="auth-form" tabindex="0">Connexion</button>
           <button class="auth-tab" id="auth-tab-register" type="button" role="tab" aria-selected="false" aria-controls="auth-form" tabindex="-1">Créer un compte</button>
         </div>
-        <form id="auth-form" class="auth-form" role="tabpanel" aria-labelledby="auth-tab-login" tabindex="0">
+        <form id="auth-form" class="auth-form" role="tabpanel" aria-labelledby="auth-tab-login" tabindex="0" novalidate>
           <label class="field"><span>NOM D'UTILISATEUR</span><input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Ex. analyste" required minlength="3" maxlength="24" pattern="[a-zA-Z0-9._\-]{3,24}"></label>
           <label class="field"><span>MOT DE PASSE</span><span class="auth-password-wrap"><input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="8 caractères minimum" required minlength="8" maxlength="200"><button class="auth-reveal" id="auth-reveal" type="button" aria-label="Afficher le mot de passe">○</button></span></label>
-          <label class="field hidden" id="auth-bootstrap-field"><span>JETON ADMINISTRATEUR INITIAL</span><input id="auth-bootstrap-token" name="bootstrapToken" type="password" autocomplete="off" placeholder="Fourni par l’administrateur" maxlength="512"></label>
-          <div id="auth-error" class="result-error hidden" role="alert"></div>
+          <label class="field hidden" id="auth-bootstrap-field"><span>JETON ADMINISTRATEUR INITIAL</span><input id="auth-bootstrap-token" name="bootstrapToken" type="password" autocomplete="off" placeholder="Fourni par l'administrateur" maxlength="512"></label>
+          <div id="auth-error" class="result-error hidden" role="alert" aria-live="assertive"></div>
           <button class="button button-primary auth-submit" type="submit" id="auth-submit"><span class="button-label">Se connecter</span><span>→</span></button>
         </form>
-        <p class="auth-note" id="auth-note">Pour créer le premier compte, saisissez le jeton initial fourni par l’administrateur. Les inscriptions suivantes créent des comptes membres.</p>
+        <p class="auth-note" id="auth-note">Pour créer le premier compte, saisissez le jeton initial fourni par l'administrateur. Les inscriptions suivantes créent des comptes membres.</p>
       </div>
     </div>
+
+    <!-- ── Dialog : Enregistrer une recherche (remplace prompt) ── -->
+    <dialog id="save-search-dialog" class="native-dialog" aria-labelledby="save-search-dialog-title" aria-modal="true">
+      <div class="dialog-header">
+        <h2 id="save-search-dialog-title" class="dialog-title">Enregistrer la recherche</h2>
+        <button type="button" class="dialog-close" aria-label="Fermer" data-dialog-close="save-search-dialog">✕</button>
+      </div>
+      <div class="dialog-body">
+        <form method="dialog" id="save-search-form" novalidate>
+          <label class="field">
+            <span>NOM DE LA RECHERCHE</span>
+            <input
+              id="save-search-name"
+              name="searchName"
+              type="text"
+              placeholder="Ex. Recherche Paris, analyse @mail…"
+              autocomplete="off"
+              required
+              maxlength="80"
+              aria-describedby="save-search-hint"
+            >
+          </label>
+          <p id="save-search-hint" class="dialog-hint">Ce nom apparaîtra dans vos raccourcis de recherche.</p>
+          <div class="dialog-actions">
+            <button type="button" class="button button-secondary" data-dialog-close="save-search-dialog">Annuler</button>
+            <button type="submit" class="button button-primary" id="save-search-confirm"><span class="button-label">Enregistrer</span><span>→</span></button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- ── Dialog : Confirmation générique ───────────────────── -->
+    <dialog id="confirm-dialog" class="native-dialog" aria-labelledby="confirm-dialog-title" aria-modal="true">
+      <div class="dialog-header">
+        <h2 id="confirm-dialog-title" class="dialog-title">Confirmer l'action</h2>
+        <button type="button" class="dialog-close" aria-label="Fermer" data-dialog-close="confirm-dialog">✕</button>
+      </div>
+      <div class="dialog-body">
+        <p id="confirm-dialog-message" class="dialog-message"></p>
+        <div class="dialog-actions">
+          <button type="button" class="button button-secondary" id="confirm-dialog-cancel" data-dialog-close="confirm-dialog">Annuler</button>
+          <button type="button" class="button button-danger" id="confirm-dialog-ok">Confirmer</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ── Bouton scroll-to-top ───────────────────────────────── -->
+    <button class="scroll-top-btn" id="scroll-top-btn" aria-label="Retour en haut" type="button" hidden>↑</button>
+
+    <!-- ── Conteneur de toasts ────────────────────────────────── -->
+    <div id="toast-host" class="toast-host" aria-live="polite" aria-atomic="false" role="status"></div>
   </body>
 </html>

@@ -9,8 +9,28 @@ const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SAVED_PER_USER = 50;
 const USERNAME_PATTERN = /^[a-z0-9._-]{3,24}$/;
+// Improved email validation (RFC 5321: max 254 chars, proper charset)
+const EMAIL_PATTERN = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
+const EMAIL_MAX_LENGTH = 254;
 const MIN_PASSWORD_LENGTH = 8;
 const ROLES = new Set(["admin", "membre"]);
+
+// All valid search payload keys (text fields + integer fields from server.js)
+const ALLOWED_PAYLOAD_KEYS = new Set([
+  "nom_famille", "prenom",
+  "date_naissance", "ville_naissance", "genre",
+  "email", "telephone", "nom_utilisateur", "adresse_ip",
+  "adresse", "code_postal", "ville",
+  "steam_id", "fivem_license", "fivem_license2", "discord_id",
+  "xbox_live_id", "live_id",
+  "nir", "iban", "bic", "vin_plaque",
+  "annee_naissance", "jour_naissance", "mois_naissance",
+  "page", "per_page", "flexible",
+]);
+
+// ---------------------------------------------------------------------------
+// Low-level JSON persistence helpers
+// ---------------------------------------------------------------------------
 
 function loadJson(file, fallback) {
   const readArray = (target) => {
@@ -88,6 +108,10 @@ function persistJson(file, data) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// In-memory state
+// ---------------------------------------------------------------------------
+
 let users = loadJson(USERS_FILE, []);
 let savedSearches = loadJson(SAVED_FILE, []);
 const sessions = new Map(loadJson(SESSIONS_FILE, [])
@@ -95,9 +119,100 @@ const sessions = new Map(loadJson(SESSIONS_FILE, [])
     && typeof session.userId === "string" && Number.isFinite(session.expiresAt))
   .map((session) => [session.tokenHash, { userId: session.userId, expiresAt: session.expiresAt }]));
 
+// ---------------------------------------------------------------------------
+// Index 1: users by ID (avoids O(n) find() on every request)
+// ---------------------------------------------------------------------------
+
+/** @type {Map<string, object>} */
+let usersById = new Map(users.map((u) => [u.id, u]));
+
+function rebuildUsersIndex() {
+  usersById = new Map(users.map((u) => [u.id, u]));
+}
+
+// ---------------------------------------------------------------------------
+// Index 2: saved searches by userId (avoids filter+sort on every listSaved call)
+// ---------------------------------------------------------------------------
+
+/** @type {Map<string, object[]>} */
+const savedByUser = new Map();
+
+function rebuildSavedIndex() {
+  savedByUser.clear();
+  for (const entry of savedSearches) {
+    if (!savedByUser.has(entry.userId)) savedByUser.set(entry.userId, []);
+    savedByUser.get(entry.userId).push(entry);
+  }
+  for (const [, arr] of savedByUser) {
+    arr.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+}
+rebuildSavedIndex();
+
+// ---------------------------------------------------------------------------
+// Session persistence — debounced for renewals, immediate for revocations
+// ---------------------------------------------------------------------------
+
+let sessionsDirty = false;
+let sessionsPersistTimer = null;
+
 function persistSessions() {
   persistJson(SESSIONS_FILE, [...sessions].map(([tokenHash, session]) => ({ tokenHash, ...session })));
 }
+
+/**
+ * Schedule a deferred session persist (used for renewals and creations).
+ * The actual write happens at most once every 5 seconds, avoiding a disk
+ * write on every single request that renews an active session.
+ */
+function schedulePersistSessions() {
+  if (sessionsPersistTimer) return;
+  sessionsDirty = true;
+  sessionsPersistTimer = setTimeout(() => {
+    sessionsPersistTimer = null;
+    if (sessionsDirty) {
+      persistSessions();
+      sessionsDirty = false;
+    }
+  }, 5_000);
+}
+
+// ---------------------------------------------------------------------------
+// Auth rate limiting — in-memory per username
+// ---------------------------------------------------------------------------
+
+/** @type {Map<string, { count: number, resetAt: number }>} */
+const authAttempts = new Map(); // username -> { count, resetAt }
+
+function checkAuthRateLimit(username) {
+  const now = Date.now();
+  let bucket = authAttempts.get(username);
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { count: 0, resetAt: now + 15 * 60 * 1000 };
+    authAttempts.set(username, bucket);
+  }
+  bucket.count++;
+  if (bucket.count > 10) {
+    // 10 attempts per 15 minutes per username
+    throw authError(429, "Trop de tentatives de connexion pour ce compte. Réessayez dans 15 minutes.");
+  }
+}
+
+function clearAuthRateLimit(username) {
+  authAttempts.delete(username);
+}
+
+// Periodically remove expired auth attempt buckets to prevent unbounded memory growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of authAttempts) {
+    if (bucket.resetAt <= now) authAttempts.delete(key);
+  }
+}, 5 * 60 * 1000).unref();
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
 
 function authError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -130,6 +245,25 @@ function validateCredentials(username, password) {
   return normalized;
 }
 
+/**
+ * Strip unknown keys and coerce / clamp values in a search-save payload.
+ * Only keys present in ALLOWED_PAYLOAD_KEYS and with string/number/boolean
+ * values pass through. Strings are truncated to 250 characters.
+ */
+function sanitizeSavedPayload(payload) {
+  const clean = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (!ALLOWED_PAYLOAD_KEYS.has(key)) continue;
+    if (typeof value === "string") {
+      clean[key] = value.slice(0, 250);
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      clean[key] = value;
+    }
+    // Arrays, objects, null, undefined → silently dropped
+  }
+  return clean;
+}
+
 function publicUser(user) {
   if (!user) return null;
   return {
@@ -140,6 +274,10 @@ function publicUser(user) {
     searchCount: user.searchCount || 0,
   };
 }
+
+// ---------------------------------------------------------------------------
+// User management
+// ---------------------------------------------------------------------------
 
 function createUser(username, password, role = "membre") {
   const normalized = validateCredentials(username, password);
@@ -159,21 +297,27 @@ function createUser(username, password, role = "membre") {
     searchCount: 0,
   };
   users.push(user);
+  usersById.set(user.id, user);
   persistJson(USERS_FILE, users);
   return user;
 }
 
 function authenticate(username, password) {
   const normalized = validateCredentials(username, password);
+  // Rate-limit before doing any expensive work (e.g. scrypt)
+  checkAuthRateLimit(normalized);
   const user = users.find((entry) => entry.usernameLower === normalized);
   if (!user || !verifyPassword(password, user.salt, user.hash)) {
+    // Do NOT clear the rate-limit counter on failure
     throw authError(401, "Nom d'utilisateur ou mot de passe incorrect.");
   }
+  // Successful authentication — clear the failure counter
+  clearAuthRateLimit(normalized);
   return user;
 }
 
 function findUserById(id) {
-  return users.find((user) => user.id === id) || null;
+  return usersById.get(id) || null;
 }
 
 function listUsers() {
@@ -205,16 +349,18 @@ function deleteUser(actor, targetId) {
     throw authError(400, "Impossible de supprimer le dernier administrateur.");
   }
   users = users.filter((user) => user.id !== targetId);
+  usersById.delete(targetId);
   savedSearches = savedSearches.filter((entry) => entry.userId !== targetId);
+  savedByUser.delete(targetId);
   for (const [token, session] of sessions) {
     if (session.userId === targetId) sessions.delete(token);
   }
+  // Immediate persist — security-sensitive deletion
   persistSessions();
   persistJson(USERS_FILE, users);
   persistJson(SAVED_FILE, savedSearches);
   return publicUser(target);
 }
-
 
 function incrementSearchCount(userId) {
   const user = findUserById(userId);
@@ -234,11 +380,17 @@ function stats() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Session management
+// ---------------------------------------------------------------------------
+
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   sessions.set(tokenHash, { userId, expiresAt: Date.now() + SESSION_TTL_MS });
-  persistSessions();
+  // Creation — use debounced persist (a burst of registrations shouldn't
+  // thrash the disk; the 5 s window is acceptable here).
+  schedulePersistSessions();
   return token;
 }
 
@@ -247,19 +399,22 @@ function getSession(token) {
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   const session = sessions.get(tokenHash);
   if (!session) return null;
-  if (session.expiresAt <= Date.now()) {
+  const now = Date.now();
+  if (session.expiresAt <= now) {
     sessions.delete(tokenHash);
+    // Immediate persist — expired session must not be reused
     persistSessions();
     return null;
   }
-  const now = Date.now();
   if (session.expiresAt - now < SESSION_TTL_MS - 60 * 60 * 1000) {
     session.expiresAt = now + SESSION_TTL_MS;
-    persistSessions();
+    // Renewal — debounced; a 5 s delay is fine for a sliding expiry
+    schedulePersistSessions();
   }
   const user = findUserById(session.userId);
   if (!user) {
     sessions.delete(tokenHash);
+    // Immediate persist — orphan session removed for security
     persistSessions();
     return null;
   }
@@ -269,7 +424,10 @@ function getSession(token) {
 function revokeSession(token) {
   if (!token) return;
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-  if (sessions.delete(tokenHash)) persistSessions();
+  if (sessions.delete(tokenHash)) {
+    // Immediate persist — revocation must be durable immediately
+    persistSessions();
+  }
 }
 
 function purgeExpiredSessions() {
@@ -283,10 +441,18 @@ function purgeExpiredSessions() {
   }
   if (changed) persistSessions();
 }
+
+// Purge on startup, then every 15 minutes (more aggressive than before)
+purgeExpiredSessions();
+setInterval(purgeExpiredSessions, 15 * 60 * 1000).unref();
+
+// ---------------------------------------------------------------------------
+// Saved searches
+// ---------------------------------------------------------------------------
+
 function listSaved(userId) {
-  return savedSearches
-    .filter((entry) => entry.userId === userId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // O(1) lookup via index instead of O(n) filter + sort
+  return savedByUser.get(userId) || [];
 }
 
 function addSaved(userId, label, payload) {
@@ -299,14 +465,19 @@ function addSaved(userId, label, payload) {
   if (owned.length >= MAX_SAVED_PER_USER) {
     throw authError(400, `Limite de ${MAX_SAVED_PER_USER} recherches enregistrées atteinte.`);
   }
+  // Sanitize payload: only allow known keys with safe value types
+  const cleanPayload = sanitizeSavedPayload(payload);
   const entry = {
     id: crypto.randomUUID(),
     userId,
     label: text,
-    payload,
+    payload: cleanPayload,
     createdAt: new Date().toISOString(),
   };
   savedSearches.push(entry);
+  // Update index: insert at front (entries are kept newest-first)
+  if (!savedByUser.has(userId)) savedByUser.set(userId, []);
+  savedByUser.get(userId).unshift(entry);
   persistJson(SAVED_FILE, savedSearches);
   return entry;
 }
@@ -315,16 +486,29 @@ function removeSaved(userId, id) {
   const entry = savedSearches.find((item) => item.id === id && item.userId === userId);
   if (!entry) throw authError(404, "Recherche enregistrée introuvable.");
   savedSearches = savedSearches.filter((item) => item.id !== id);
+  // Update index
+  const userEntries = savedByUser.get(userId);
+  if (userEntries) {
+    const idx = userEntries.findIndex((item) => item.id === id);
+    if (idx !== -1) userEntries.splice(idx, 1);
+    if (userEntries.length === 0) savedByUser.delete(userId);
+  }
   persistJson(SAVED_FILE, savedSearches);
   return entry;
 }
+
+// ---------------------------------------------------------------------------
+// User profile
+// ---------------------------------------------------------------------------
 
 function updateUserProfile(userId, { email, lang, timezone, datefmt }) {
   const user = findUserById(userId);
   if (!user) throw authError(404, "Utilisateur introuvable.");
   if (email !== undefined) {
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw authError(400, "Email invalide.");
+    if (email) {
+      if (email.length > EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(email)) {
+        throw authError(400, "Email invalide.");
+      }
     }
     user.email = email || null;
   }
@@ -365,6 +549,7 @@ function resetPassword(targetId, newPassword) {
   for (const [token, session] of sessions) {
     if (session.userId === targetId) sessions.delete(token);
   }
+  // Immediate persist — security-sensitive operation
   persistSessions();
   persistJson(USERS_FILE, users);
   return publicUser(user);
@@ -374,21 +559,26 @@ function deleteOwnAccount(userId) {
   const user = findUserById(userId);
   if (!user) throw authError(404, "Utilisateur introuvable.");
   users = users.filter((u) => u.id !== userId);
+  usersById.delete(userId);
   savedSearches = savedSearches.filter((entry) => entry.userId !== userId);
+  savedByUser.delete(userId);
   for (const [token, session] of sessions) {
     if (session.userId === userId) sessions.delete(token);
   }
+  // Immediate persist — account deletion must be durable immediately
   persistSessions();
   persistJson(USERS_FILE, users);
   persistJson(SAVED_FILE, savedSearches);
   return publicUser(user);
 }
 
-setInterval(purgeExpiredSessions, 30 * 60 * 1000).unref();
+// ---------------------------------------------------------------------------
+// Load-time integrity check
+// ---------------------------------------------------------------------------
 
-// #10 — load-time integrity check: warn about users whose stored hash has an unexpected length.
-// scrypt(64 bytes) → 128 hex chars. An odd-length or wrong-length hash would make timingSafeEqual
-// always return false, locking that user out silently.
+// Warn about users whose stored hash has an unexpected length.
+// scrypt(64 bytes) → 128 hex chars. An odd-length or wrong-length hash would
+// make timingSafeEqual always return false, locking that user out silently.
 (function checkHashIntegrity() {
   const EXPECTED_HASH_HEX_LENGTH = 128; // 64 bytes × 2
   for (const user of users) {
@@ -400,6 +590,10 @@ setInterval(purgeExpiredSessions, 30 * 60 * 1000).unref();
     }
   }
 }());
+
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
 
 module.exports = {
   ROLES,
@@ -423,4 +617,7 @@ module.exports = {
   changePassword,
   resetPassword,
   deleteOwnAccount,
+  // Exported for testing and potential middleware use
+  checkAuthRateLimit,
+  clearAuthRateLimit,
 };

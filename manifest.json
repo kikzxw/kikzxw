@@ -1,0 +1,31 @@
+{
+  "name": "KIKZXW — Intelligence OSINT",
+  "short_name": "KIKZXW",
+  "description": "Espace privé de recherche multicritère et d'analyse OSINT",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0b",
+  "theme_color": "#080d0b",
+  "lang": "fr-FR",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Ccircle cx='96' cy='96' r='96' fill='%230a0a0b'/%3E%3Ccircle cx='88' cy='84' r='36' fill='none' stroke='%2300ff88' stroke-width='10'/%3E%3Cline x1='114' y1='110' x2='148' y2='144' stroke='%2300ff88' stroke-width='10' stroke-linecap='round'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Ccircle cx='256' cy='256' r='256' fill='%230a0a0b'/%3E%3Ccircle cx='232' cy='224' r='96' fill='none' stroke='%2300ff88' stroke-width='26'/%3E%3Cline x1='304' y1='296' x2='400' y2='392' stroke='%2300ff88' stroke-width='26' stroke-linecap='round'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%230a0a0b'/%3E%3Ccircle cx='232' cy='224' r='96' fill='none' stroke='%2300ff88' stroke-width='26'/%3E%3Cline x1='304' y1='296' x2='400' y2='392' stroke='%2300ff88' stroke-width='26' stroke-linecap='round'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

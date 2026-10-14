@@ -21,7 +21,7 @@ const INTEGER_FIELDS = {
 };
 
 const SECURITY_HEADERS = {
-  "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://cdn.jsdelivr.net; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+  "Content-Security-Policy": "default-src 'self'; connect-src 'self' https://cdn.jsdelivr.net; style-src 'self'; font-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
