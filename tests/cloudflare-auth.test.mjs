@@ -56,6 +56,25 @@ test("forwards the browser session cookie when checking the current account", as
   assert.equal(forwardedRequest.headers.get("Cookie"), "rt_session=abc123");
 });
 
+test("forwards Cloudflare profile routes to the persistent account store", async () => {
+  let forwardedRequest;
+  const response = await worker.fetch(new Request("https://kikzxw.test/api/user/profile", {
+    method: "PATCH",
+    headers: { Cookie: "rt_session=abc123", "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "member@example.com" }),
+  }), {
+    AUTH_STORE: createAuthBinding(async (request) => {
+      forwardedRequest = request;
+      return Response.json({ user: { email: "member@example.com" } });
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(new URL(forwardedRequest.url).pathname, "/api/user/profile");
+  assert.equal(forwardedRequest.method, "PATCH");
+  assert.equal(forwardedRequest.headers.get("Cookie"), "rt_session=abc123");
+});
+
 test("reports missing Cloudflare account storage instead of falling through to static assets", async () => {
   const response = await worker.fetch(new Request("https://kikzxw.test/api/auth/register", {
     method: "POST",

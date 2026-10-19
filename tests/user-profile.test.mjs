@@ -84,6 +84,70 @@ async function startWithAdmin(t) {
   return { url, cookie, userId: user.id, child };
 }
 
+test("admin platform settings reject invalid batches without partial updates", async (t) => {
+  const { url, cookie } = await startWithAdmin(t);
+  const invalid = await fetch(`${url}/api/admin/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ registrationOpen: false, loginMode: "invalid" }),
+  });
+  assert.equal(invalid.status, 400);
+
+  const current = await fetch(`${url}/api/admin/settings`, { headers: { Cookie: cookie } });
+  assert.equal((await current.json()).registrationOpen, true);
+});
+
+test("admin access switches enforce registration, login, and search restrictions", async (t) => {
+  const { url, cookie } = await startWithAdmin(t);
+  const memberResponse = await fetch(`${url}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "switch_member", password: "member-password-123" }),
+  });
+  assert.equal(memberResponse.status, 201);
+  const memberCookie = memberResponse.headers.get("set-cookie").split(";")[0];
+
+  const closeSettings = await fetch(`${url}/api/admin/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ registrationOpen: false, loginMode: "admins", searchEnabled: false }),
+  });
+  assert.equal(closeSettings.status, 200);
+
+  const registration = await fetch(`${url}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "blocked_member", password: "member-password-123" }),
+  });
+  assert.equal(registration.status, 403);
+
+  const memberLogin = await fetch(`${url}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "switch_member", password: "member-password-123" }),
+  });
+  assert.equal(memberLogin.status, 403);
+
+  const pausedSearch = await fetch(`${url}/api/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: memberCookie },
+    body: JSON.stringify({ prenom: "Synthetic" }),
+  });
+  assert.equal(pausedSearch.status, 503);
+
+  await fetch(`${url}/api/admin/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ loginMode: "closed" }),
+  });
+  const adminLogin = await fetch(`${url}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "profile_admin", password: "profil-test-password" }),
+  });
+  assert.equal(adminLogin.status, 503);
+});
+
 test("/api/user/profile PATCH updates email and profile fields", async (t) => {
   const { url, cookie } = await startWithAdmin(t);
 
@@ -108,6 +172,36 @@ test("/api/user/profile PATCH rejects invalid email", async (t) => {
   });
   assert.equal(response.status, 400);
   assert.match((await response.json()).error, /email/i);
+});
+
+test("/api/user/profile PATCH validates profile preference types and values", async (t) => {
+  const { url, cookie } = await startWithAdmin(t);
+  for (const body of [
+    { email: 42 },
+    { lang: "xx" },
+    { timezone: "Not/A_Timezone" },
+    { datefmt: "arbitrary" },
+  ]) {
+    const response = await fetch(`${url}/api/user/profile`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 400, JSON.stringify(body));
+  }
+});
+
+test("/api/user/profile PATCH does not partially save a rejected profile update", async (t) => {
+  const { url, cookie } = await startWithAdmin(t);
+  const update = await fetch(`${url}/api/user/profile`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ email: "partial@example.com", lang: "invalid" }),
+  });
+  assert.equal(update.status, 400);
+
+  const current = await fetch(`${url}/api/auth/me`, { headers: { Cookie: cookie } });
+  assert.equal((await current.json()).user.email, null);
 });
 
 test("/api/user/password PATCH changes password and allows re-login", async (t) => {
@@ -158,6 +252,16 @@ test("/api/user/password PATCH rejects a new password that is too short", async 
   });
   assert.equal(response.status, 400);
   assert.match((await response.json()).error, /8 caractères/);
+});
+
+test("/api/user/password PATCH rejects passwords over 200 characters", async (t) => {
+  const { url, cookie } = await startWithAdmin(t);
+  const response = await fetch(`${url}/api/user/password`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ currentPassword: "profil-test-password", newPassword: "x".repeat(201) }),
+  });
+  assert.equal(response.status, 400);
 });
 
 test("/api/user/account DELETE suppresses the account and invalidates the session", async (t) => {

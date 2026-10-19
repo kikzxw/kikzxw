@@ -178,8 +178,8 @@ function updateSettings(patch) {
     if (typeof value !== "boolean") throw authError(400, `Le réglage « ${key} » doit être un booléen.`);
     next[key] = value;
   }
+  persistJson(SETTINGS_FILE, next);
   settings = next;
-  persistJson(SETTINGS_FILE, settings);
   return { ...settings };
 }
 const sessions = new Map(loadJson(SESSIONS_FILE, [])
@@ -357,6 +357,12 @@ function adminUser(user) {
     timezone: user.timezone || null,
     datefmt: user.datefmt || null,
   };
+}
+
+/** Account-scoped details returned only to the authenticated account owner. */
+function accountUser(user) {
+  if (!user) return null;
+  return adminUser(user);
 }
 
 // ---------------------------------------------------------------------------
@@ -697,17 +703,39 @@ function removeSaved(userId, id) {
 function updateUserProfile(userId, { email, lang, timezone, datefmt }) {
   const user = findUserById(userId);
   if (!user) throw authError(404, "Utilisateur introuvable.");
+  let nextEmail = user.email || null;
+  let nextLang = user.lang || null;
+  let nextTimezone = user.timezone || null;
+  let nextDatefmt = user.datefmt || null;
   if (email !== undefined) {
+    if (email !== null && email !== "" && typeof email !== "string") {
+      throw authError(400, "Email invalide.");
+    }
     if (email) {
       if (email.length > EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(email)) {
         throw authError(400, "Email invalide.");
       }
     }
-    user.email = email || null;
+    nextEmail = email || null;
   }
-  if (lang !== undefined) user.lang = lang;
-  if (timezone !== undefined) user.timezone = timezone;
-  if (datefmt !== undefined) user.datefmt = datefmt;
+  if (lang !== undefined) {
+    if (!["fr", "en"].includes(lang)) throw authError(400, "Langue invalide.");
+    nextLang = lang;
+  }
+  if (timezone !== undefined) {
+    if (typeof timezone !== "string" || timezone.length > 64) throw authError(400, "Fuseau horaire invalide.");
+    try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }); }
+    catch { throw authError(400, "Fuseau horaire invalide."); }
+    nextTimezone = timezone;
+  }
+  if (datefmt !== undefined) {
+    if (!["fr-FR", "ISO", "US"].includes(datefmt)) throw authError(400, "Format de date invalide.");
+    nextDatefmt = datefmt;
+  }
+  user.email = nextEmail;
+  user.lang = nextLang;
+  user.timezone = nextTimezone;
+  user.datefmt = nextDatefmt;
   persistJson(USERS_FILE, users);
   return publicUser(user);
 }
@@ -715,6 +743,14 @@ function updateUserProfile(userId, { email, lang, timezone, datefmt }) {
 function changePassword(userId, currentPassword, newPassword) {
   const user = findUserById(userId);
   if (!user) throw authError(404, "Utilisateur introuvable.");
+  if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+    throw authError(400, "Champs requis manquants.");
+  }
+  if (currentPassword.length > 200) throw authError(400, "Le mot de passe actuel est trop long.");
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw authError(400, `Le nouveau mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+  }
+  if (newPassword.length > 200) throw authError(400, "Le mot de passe est trop long (200 caractères maximum).");
   if (!verifyPassword(currentPassword, user.salt, user.hash)) {
     throw authError(401, "Mot de passe actuel incorrect.");
   }
@@ -792,6 +828,7 @@ module.exports = {
   ROLES,
   publicUser,
   adminUser,
+  accountUser,
   createUser,
   userCount,
   authenticate,

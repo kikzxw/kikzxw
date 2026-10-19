@@ -52,6 +52,8 @@ const AUTH_STORE_NAME = "kikzxw-account-store";
 const SESSION_COOKIE = "rt_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_PASSWORD_LENGTH = 8;
+const EMAIL_MAX_LENGTH = 254;
+const EMAIL_PATTERN = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
 const USERNAME_PATTERN = /^[a-z0-9._-]{3,24}$/;
 const encoder = new TextEncoder();
 
@@ -160,7 +162,11 @@ export class AuthStore {
           role TEXT NOT NULL CHECK (role IN ('admin', 'membre')),
           created_at TEXT NOT NULL,
           search_count INTEGER NOT NULL DEFAULT 0,
-          suspended INTEGER NOT NULL DEFAULT 0
+          suspended INTEGER NOT NULL DEFAULT 0,
+          email TEXT,
+          lang TEXT,
+          timezone TEXT,
+          datefmt TEXT
         )`,
       );
       sql.exec(
@@ -198,6 +204,10 @@ export class AuthStore {
         sql.exec("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0");
       } catch {
         // Column already present — nothing to migrate.
+      }
+      for (const column of ["email TEXT", "lang TEXT", "timezone TEXT", "datefmt TEXT"]) {
+        try { sql.exec(`ALTER TABLE users ADD COLUMN ${column}`); }
+        catch { /* Existing deployments already have this profile column. */ }
       }
     });
   }
@@ -242,26 +252,30 @@ export class AuthStore {
       throw Object.assign(new Error("Les réglages doivent être un objet JSON valide."), { status: 400 });
     }
     const current = this.getSettings();
+    const next = { ...current };
     for (const [key, value] of Object.entries(body)) {
       if (!(key in current)) continue; // ignore unknown keys
       if (key === "notice") {
         if (typeof value !== "string") throw Object.assign(new Error("Le message d'annonce doit être du texte."), { status: 400 });
-        this.writeSetting(key, value.slice(0, 200));
+        next[key] = value.slice(0, 200);
         continue;
       }
       if (key === "loginMode") {
         if (!["all", "admins", "closed"].includes(value)) {
           throw Object.assign(new Error("Mode de connexion invalide (attendu : all, admins ou closed)."), { status: 400 });
         }
-        this.writeSetting(key, value);
+        next[key] = value;
         continue;
       }
       if (typeof value !== "boolean") {
         throw Object.assign(new Error(`Le réglage « ${key} » doit être un booléen.`), { status: 400 });
       }
-      this.writeSetting(key, value);
+      next[key] = value;
     }
-    return this.getSettings();
+    for (const key of Object.keys(next)) {
+      if (next[key] !== current[key]) this.writeSetting(key, next[key]);
+    }
+    return next;
   }
 
   async fetch(request) {
@@ -280,6 +294,7 @@ export class AuthStore {
       if (pathname === "/api/auth/logout" && request.method === "POST") return this.logout(request);
       if (pathname === "/api/auth/search-count" && request.method === "POST") return this.incrementSearchCount(request);
       if (pathname === "/api/settings" && request.method === "GET") return authJson(200, this.getSettings());
+      if (pathname.startsWith("/api/user/")) return this.userProfile(request, pathname);
       if (pathname === "/api/admin/settings") return this.adminSettings(request);
       if (pathname === "/api/admin/logout-all" && request.method === "POST") return this.adminLogoutAll(request);
       if (pathname === "/api/admin/stats" && request.method === "GET") return this.adminStats(request);
@@ -310,7 +325,8 @@ export class AuthStore {
     if (!token) return null;
     const digest = await hashSession(token);
     const row = this.ctx.storage.sql.exec(
-      `SELECT users.id, users.username, users.role, users.created_at, users.search_count, users.suspended
+      `SELECT users.id, users.username, users.role, users.created_at, users.search_count, users.suspended,
+       users.email, users.lang, users.timezone, users.datefmt
        FROM sessions JOIN users ON users.id = sessions.user_id
        WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.suspended = 0`,
       digest,
@@ -321,13 +337,7 @@ export class AuthStore {
       Date.now() + SESSION_TTL_MS,
       digest,
     );
-    return row ? {
-      id: row.id,
-      username: displayUsername(row.username),
-      role: row.role,
-      createdAt: row.created_at,
-      searchCount: row.search_count,
-    } : null;
+    return row ? this.accountUserView(row) : null;
   }
 
   async authorizedUser(request, admin = false) {
@@ -396,12 +406,22 @@ export class AuthStore {
     };
   }
 
+  accountUserView(row) {
+    return {
+      ...this.adminUserView(row),
+      email: row.email || null,
+      lang: row.lang || null,
+      timezone: row.timezone || null,
+      datefmt: row.datefmt || null,
+    };
+  }
+
   async adminUser(request, targetId) {
     const access = await this.authorizedUser(request, true);
     if (access.response) return access.response;
     if (request.method === "GET") {
       const target = this.ctx.storage.sql.exec(
-        "SELECT id, username, role, created_at, search_count, suspended FROM users WHERE id = ?",
+        "SELECT id, username, role, created_at, search_count, suspended, email, lang, timezone, datefmt FROM users WHERE id = ?",
         targetId,
       ).toArray()[0];
       if (!target) return authJson(404, { error: "Utilisateur introuvable." });
@@ -421,11 +441,10 @@ export class AuthStore {
       return authJson(200, {
         user: {
           ...this.adminUserView(target),
-          // Cloudflare deployments do not collect profile e-mail/preferences.
-          email: null,
-          lang: null,
-          timezone: null,
-          datefmt: null,
+          email: target.email || null,
+          lang: target.lang || null,
+          timezone: target.timezone || null,
+          datefmt: target.datefmt || null,
         },
         sessions: liveSessions.map((row) => ({ expiresAt: new Date(row.expires_at).toISOString() })),
         saved,
@@ -439,7 +458,7 @@ export class AuthStore {
     if (request.method === "PATCH") {
       const body = await this.readBody(request);
       const target = this.ctx.storage.sql.exec(
-        "SELECT id, username, role, created_at, search_count, suspended FROM users WHERE id = ?",
+        "SELECT id, username, role, created_at, search_count, suspended, email, lang, timezone, datefmt FROM users WHERE id = ?",
         targetId,
       ).toArray()[0];
       if (!target) return authJson(404, { error: "Utilisateur introuvable." });
@@ -716,7 +735,7 @@ export class AuthStore {
         return authJson(503, { error: "Les connexions sont actuellement fermées." });
       }
       const row = this.ctx.storage.sql.exec(
-        "SELECT id, username, salt, password_hash, role, created_at, search_count, suspended FROM users WHERE username = ? COLLATE NOCASE",
+        "SELECT id, username, salt, password_hash, role, created_at, search_count, suspended, email, lang, timezone, datefmt FROM users WHERE username = ? COLLATE NOCASE",
         username,
       ).toArray()[0];
       if (!row) return authJson(401, { error: "Nom d'utilisateur ou mot de passe incorrect." });
@@ -731,14 +750,7 @@ export class AuthStore {
       if (this.getSettings().loginMode === "admins" && row.role !== "admin") {
         return authJson(403, { error: "Les connexions sont actuellement réservées aux administrateurs." });
       }
-      const user = {
-        id: row.id,
-        username: displayUsername(row.username),
-        role: row.role,
-        createdAt: row.created_at,
-        searchCount: row.search_count,
-        suspended: Boolean(row.suspended),
-      };
+      const user = this.accountUserView(row);
       const token = await this.createSession(user.id);
       return authJson(200, { user }, { "Set-Cookie": this.sessionCookie(token, request) });
     } catch (error) {
@@ -771,7 +783,8 @@ export class AuthStore {
     if (!token) return authJson(401, { error: "Session inactive ou expirée." });
     const digest = await hashSession(token);
     const row = this.ctx.storage.sql.exec(
-      `SELECT users.id, users.username, users.role, users.created_at, users.search_count, users.suspended
+      `SELECT users.id, users.username, users.role, users.created_at, users.search_count, users.suspended,
+       users.email, users.lang, users.timezone, users.datefmt
        FROM sessions JOIN users ON users.id = sessions.user_id
        WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.suspended = 0`,
       digest,
@@ -784,15 +797,99 @@ export class AuthStore {
       digest,
     );
     return authJson(200, {
-      user: {
-        id: row.id,
-        username: displayUsername(row.username),
-        role: row.role,
-        createdAt: row.created_at,
-        searchCount: row.search_count,
-        suspended: Boolean(row.suspended),
-      },
+      user: this.accountUserView(row),
     });
+  }
+
+  async userProfile(request, pathname) {
+    const access = await this.authorizedUser(request);
+    if (access.response) return access.response;
+
+    if (request.method === "PATCH" && pathname === "/api/user/profile") {
+      const body = await this.readBody(request);
+      const patch = {};
+      if (body.email !== undefined) {
+        if (body.email !== null && body.email !== "" && typeof body.email !== "string") {
+          return authJson(400, { error: "Email invalide." });
+        }
+        const email = typeof body.email === "string" ? body.email.trim() : "";
+        if (email && (email.length > EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(email))) {
+          return authJson(400, { error: "Email invalide." });
+        }
+        patch.email = email || null;
+      }
+      if (body.lang !== undefined) {
+        if (!["fr", "en"].includes(body.lang)) return authJson(400, { error: "Langue invalide." });
+        patch.lang = body.lang;
+      }
+      if (body.timezone !== undefined) {
+        if (typeof body.timezone !== "string" || body.timezone.length > 64) {
+          return authJson(400, { error: "Fuseau horaire invalide." });
+        }
+        try { new Intl.DateTimeFormat("en-US", { timeZone: body.timezone }); }
+        catch { return authJson(400, { error: "Fuseau horaire invalide." }); }
+        patch.timezone = body.timezone;
+      }
+      if (body.datefmt !== undefined) {
+        if (!["fr-FR", "ISO", "US"].includes(body.datefmt)) return authJson(400, { error: "Format de date invalide." });
+        patch.datefmt = body.datefmt;
+      }
+      const assignments = Object.keys(patch);
+      if (assignments.length) {
+        this.ctx.storage.sql.exec(
+          `UPDATE users SET ${assignments.map((key) => `${key} = ?`).join(", ")} WHERE id = ?`,
+          ...assignments.map((key) => patch[key]),
+          access.user.id,
+        );
+      }
+      const row = this.ctx.storage.sql.exec(
+        "SELECT id, username, role, created_at, search_count, suspended, email, lang, timezone, datefmt FROM users WHERE id = ?",
+        access.user.id,
+      ).toArray()[0];
+      return row ? authJson(200, { user: this.accountUserView(row) }) : authJson(404, { error: "Utilisateur introuvable." });
+    }
+
+    if (request.method === "PATCH" && pathname === "/api/user/password") {
+      const body = await this.readBody(request);
+      const { currentPassword, newPassword } = body;
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+        return authJson(400, { error: "Champs requis manquants." });
+      }
+      if (currentPassword.length > 200) return authJson(400, { error: "Le mot de passe actuel est trop long." });
+      if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        return authJson(400, { error: `Le nouveau mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.` });
+      }
+      if (newPassword.length > 200) return authJson(400, { error: "Le mot de passe est trop long (200 caractères maximum)." });
+      const row = this.ctx.storage.sql.exec(
+        "SELECT salt, password_hash FROM users WHERE id = ?",
+        access.user.id,
+      ).toArray()[0];
+      if (!row) return authJson(404, { error: "Utilisateur introuvable." });
+      const candidate = await hashPassword(currentPassword, fromHex(row.salt));
+      if (!safeEqual(candidate, fromHex(row.password_hash))) {
+        return authJson(401, { error: "Mot de passe actuel incorrect." });
+      }
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const hash = await hashPassword(newPassword, salt);
+      this.ctx.storage.sql.exec(
+        "UPDATE users SET salt = ?, password_hash = ? WHERE id = ?",
+        toHex(salt),
+        toHex(hash),
+        access.user.id,
+      );
+      return authJson(200, { user: access.user });
+    }
+
+    if (request.method === "DELETE" && pathname === "/api/user/account") {
+      this.ctx.storage.sql.exec("DELETE FROM saved_searches WHERE user_id = ?", access.user.id);
+      this.ctx.storage.sql.exec("DELETE FROM sessions WHERE user_id = ?", access.user.id);
+      this.ctx.storage.sql.exec("DELETE FROM users WHERE id = ?", access.user.id);
+      const expired = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+      if (request.headers.get("X-Forwarded-Proto") === "https") expired.push("Secure");
+      return authJson(200, { ok: true }, { "Set-Cookie": expired.join("; ") });
+    }
+
+    return authJson(405, { error: "Méthode non autorisée." });
   }
 
   async logout(request) {
@@ -970,6 +1067,7 @@ export default {
     if (pathname === "/api/auth/search-count") return jsonResponse(404, { error: "Endpoint inconnu." });
     if (pathname === "/api/settings"
       || pathname.startsWith("/api/auth/")
+      || pathname.startsWith("/api/user/")
       || pathname.startsWith("/api/admin/")
       || pathname === "/api/saved"
       || pathname.startsWith("/api/saved/")) {

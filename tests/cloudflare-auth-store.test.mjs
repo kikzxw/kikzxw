@@ -21,7 +21,7 @@ function createSqlStorage() {
       if (query.startsWith("CREATE ")) return cursor();
       if (query.startsWith("ALTER ")) return cursor(); // migration simulée
       if (query === "SELECT value FROM settings WHERE key = ?") {
-        return settings.has(values[0]) ? [{ value: settings.get(values[0]) }] : [];
+        return cursor(settings.has(values[0]) ? [{ value: settings.get(values[0]) }] : []);
       }
       if (query.startsWith("INSERT INTO settings")) {
         settings.set(values[0], values[1]);
@@ -52,7 +52,7 @@ function createSqlStorage() {
       if (query === "SELECT COUNT(*) AS count FROM users") return cursor([{ count: users.length }]);
       if (query.startsWith("INSERT INTO users")) {
         const [id, username, salt, password_hash, role, created_at] = values;
-        users.push({ id, username, salt, password_hash, role, created_at, search_count: 0, suspended: 0 });
+        users.push({ id, username, salt, password_hash, role, created_at, search_count: 0, suspended: 0, email: null, lang: null, timezone: null, datefmt: null });
         return cursor();
       }
       if (query === "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)") {
@@ -66,8 +66,23 @@ function createSqlStorage() {
         }
         return cursor();
       }
-      if (query === "SELECT id, username, salt, password_hash, role, created_at, search_count, suspended FROM users WHERE username = ? COLLATE NOCASE") {
+      if (query.startsWith("SELECT id, username, salt, password_hash, role, created_at, search_count, suspended, email, lang, timezone, datefmt FROM users WHERE username = ? COLLATE NOCASE")) {
         return cursor(users.filter((user) => user.username.toLowerCase() === values[0].toLowerCase()));
+      }
+      if (query.startsWith("SELECT ") && query.includes(" FROM users WHERE id = ?")) {
+        const user = users.find((entry) => entry.id === values[0]);
+        if (!user) return cursor();
+        const selected = query.slice("SELECT ".length, query.indexOf(" FROM users WHERE id = ?"))
+          .split(",").map((column) => column.trim());
+        return cursor([Object.fromEntries(selected.map((column) => [column, user[column]]))]);
+      }
+      if (query.startsWith("UPDATE users SET ")) {
+        const user = users.find((entry) => entry.id === values.at(-1));
+        if (!user) return cursor();
+        const columns = query.slice("UPDATE users SET ".length, query.indexOf(" WHERE id = ?"))
+          .split(",").map((part) => part.trim().split(" = ")[0]);
+        columns.forEach((column, index) => { user[column] = values[index]; });
+        return cursor();
       }
       if (query.includes("FROM sessions JOIN users")) {
         const session = sessions.find((entry) => entry.token_hash === values[0] && entry.expires_at > values[1]);
@@ -79,6 +94,10 @@ function createSqlStorage() {
           created_at: user.created_at,
           search_count: user.search_count,
           suspended: user.suspended,
+          email: user.email,
+          lang: user.lang,
+          timezone: user.timezone,
+          datefmt: user.datefmt,
         }] : []);
       }
       if (query.startsWith("UPDATE sessions SET expires_at = ?")) {
@@ -89,6 +108,18 @@ function createSqlStorage() {
       if (query === "DELETE FROM sessions WHERE token_hash = ?") {
         const index = sessions.findIndex((entry) => entry.token_hash === values[0]);
         if (index >= 0) sessions.splice(index, 1);
+        return cursor();
+      }
+      if (query === "DELETE FROM sessions WHERE user_id = ?") {
+        for (let index = sessions.length - 1; index >= 0; index -= 1) {
+          if (sessions[index].user_id === values[0]) sessions.splice(index, 1);
+        }
+        return cursor();
+      }
+      if (query === "DELETE FROM saved_searches WHERE user_id = ?") return cursor();
+      if (query === "DELETE FROM users WHERE id = ?") {
+        const index = users.findIndex((user) => user.id === values[0]);
+        if (index >= 0) users.splice(index, 1);
         return cursor();
       }
       throw new Error(`Unexpected SQL in test double: ${query}`);
@@ -145,6 +176,42 @@ test("SQLite-backed auth store registers, authenticates, resumes, and logs out w
   assert.equal(currentSession.status, 200);
   assert.equal((await currentSession.json()).user.id, registered.user.id);
 
+  const updateProfile = await store.fetch(new Request("https://auth.internal/api/user/profile", {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.com", lang: "fr", timezone: "Europe/Paris", datefmt: "ISO" }),
+  }));
+  assert.equal(updateProfile.status, 200);
+  assert.equal((await updateProfile.json()).user.email, "admin@example.com");
+  const rejectedProfile = await store.fetch(new Request("https://auth.internal/api/user/profile", {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "partial@example.com", lang: "invalid" }),
+  }));
+  assert.equal(rejectedProfile.status, 400);
+  const refreshedProfile = await store.fetch(new Request("https://auth.internal/api/auth/me", { headers: { Cookie: cookie } }));
+  assert.equal((await refreshedProfile.clone().json()).user.email, "admin@example.com");
+  const refreshedPayload = await refreshedProfile.json();
+  assert.equal(refreshedPayload.user.timezone, "Europe/Paris");
+
+  const invalidSettings = await store.fetch(new Request("https://auth.internal/api/admin/settings", {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ registrationOpen: false, loginMode: "invalid" }),
+  }));
+  assert.equal(invalidSettings.status, 400);
+  const unchangedSettings = await store.fetch(new Request("https://auth.internal/api/admin/settings", {
+    headers: { Cookie: cookie },
+  }));
+  assert.equal((await unchangedSettings.json()).registrationOpen, true);
+
+  const passwordChange = await store.fetch(new Request("https://auth.internal/api/user/password", {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword: "cloud-test-password", newPassword: "cloud-new-password" }),
+  }));
+  assert.equal(passwordChange.status, 200);
+
   const logout = await store.fetch(new Request("https://auth.internal/api/auth/logout", {
     method: "POST",
     headers: { Cookie: cookie },
@@ -154,12 +221,19 @@ test("SQLite-backed auth store registers, authenticates, resumes, and logs out w
   const login = await store.fetch(new Request("https://auth.internal/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.42" },
-    body: JSON.stringify({ username: "cloud-user", password: "cloud-test-password" }),
+    body: JSON.stringify({ username: "cloud-user", password: "cloud-new-password" }),
   }));
   assert.equal(login.status, 200);
+  const loginCookie = login.headers.get("Set-Cookie")?.split(";")[0];
+  const deleteAccount = await store.fetch(new Request("https://auth.internal/api/user/account", {
+    method: "DELETE",
+    headers: { Cookie: loginCookie, "X-Forwarded-Proto": "https" },
+  }));
+  assert.equal(deleteAccount.status, 200);
+  assert.match(deleteAccount.headers.get("Set-Cookie"), /Max-Age=0/);
 
   const invalidatedSession = await store.fetch(new Request("https://auth.internal/api/auth/me", {
-    headers: { Cookie: cookie },
+    headers: { Cookie: loginCookie },
   }));
   assert.equal(invalidatedSession.status, 401);
 });

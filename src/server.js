@@ -526,7 +526,7 @@ async function handleRegister(request, response) {
     const user = store.createUser(body.username, body.password, firstUser ? "admin" : "membre");
     const token = store.createSession(user.id);
     response.setHeader("Set-Cookie", sessionCookie(token, request));
-    sendJson(response, 201, { user: store.publicUser(user), firstUser: user.role === "admin" });
+    sendJson(response, 201, { user: store.accountUser(user), firstUser: user.role === "admin" });
   } catch (error) {
     sendAuthError(response, error);
   }
@@ -560,7 +560,7 @@ async function handleLogin(request, response) {
     }
     const token = store.createSession(user.id);
     response.setHeader("Set-Cookie", sessionCookie(token, request));
-    sendJson(response, 200, { user: store.publicUser(user) });
+    sendJson(response, 200, { user: store.accountUser(user) });
   } catch (error) {
     sendAuthError(response, error);
   }
@@ -579,7 +579,7 @@ function handleMe(request, response) {
     sendJson(response, 401, { error: "Session inactive ou expirée." });
     return;
   }
-  sendJson(response, 200, { user: store.publicUser(session.user) });
+  sendJson(response, 200, { user: store.accountUser(session.user) });
 }
 
 async function handleAdminUsers(request, response, pathname) {
