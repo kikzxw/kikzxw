@@ -649,6 +649,10 @@ async function handleAdminUsers(request, response, pathname) {
     if (request.method === "PATCH") {
       const body = await readAuthBody(request);
       if (body.password !== undefined) {
+        if (targetId === session.user.id) {
+          sendJson(response, 400, { error: "Utilisez les paramètres du compte pour modifier votre propre mot de passe." });
+          return;
+        }
         const user = store.resetPassword(targetId, body.password);
         sendJson(response, 200, { user });
       } else if (body.suspended !== undefined) {

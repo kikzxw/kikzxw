@@ -176,6 +176,19 @@ test("SQLite-backed auth store registers, authenticates, resumes, and logs out w
   assert.equal(currentSession.status, 200);
   assert.equal((await currentSession.json()).user.id, registered.user.id);
 
+  const selfRoleChange = await store.fetch(new Request(`https://auth.internal/api/admin/users/${registered.user.id}`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "membre" }),
+  }));
+  assert.equal(selfRoleChange.status, 400);
+  const selfPasswordReset = await store.fetch(new Request(`https://auth.internal/api/admin/users/${registered.user.id}`, {
+    method: "PATCH",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "other-cloud-password" }),
+  }));
+  assert.equal(selfPasswordReset.status, 400);
+
   const updateProfile = await store.fetch(new Request("https://auth.internal/api/user/profile", {
     method: "PATCH",
     headers: { Cookie: cookie, "Content-Type": "application/json" },

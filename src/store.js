@@ -425,6 +425,9 @@ function setRole(actor, targetId, role) {
   if (!ROLES.has(role)) throw authError(400, "Rôle inconnu (attendu : admin ou membre).");
   const target = findUserById(targetId);
   if (!target) throw authError(404, "Utilisateur introuvable.");
+  if (actor?.id === targetId && role !== target.role) {
+    throw authError(400, "Vous ne pouvez pas modifier votre propre rôle.");
+  }
   const admins = users.filter((user) => user.role === "admin");
   if (target.role === "admin" && role !== "admin" && admins.length <= 1) {
     throw authError(400, "Impossible de rétrograder le dernier administrateur.");

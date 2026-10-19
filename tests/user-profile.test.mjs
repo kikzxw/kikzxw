@@ -424,3 +424,26 @@ test("admin password reset allows the user to log in with the new password", asy
 
   void userId; // used for role context
 });
+
+test("admin cannot change their own role or reset their own password from user management", async (t) => {
+  const { url, cookie, userId } = await startWithAdmin(t);
+  const headers = { "Content-Type": "application/json", Cookie: cookie };
+
+  const roleChange = await fetch(`${url}/api/admin/users/${userId}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ role: "membre" }),
+  });
+  assert.equal(roleChange.status, 400);
+
+  const passwordReset = await fetch(`${url}/api/admin/users/${userId}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ password: "nouveau-mot-de-passe" }),
+  });
+  assert.equal(passwordReset.status, 400);
+
+  const stillAdmin = await fetch(`${url}/api/auth/me`, { headers: { Cookie: cookie } });
+  assert.equal(stillAdmin.status, 200);
+  assert.equal((await stillAdmin.json()).user.role, "admin");
+});

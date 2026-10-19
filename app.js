@@ -2063,6 +2063,8 @@ async function loadAdminPanel() {
       actions.append(remove);
       const reset = element("button", "text-button", "Réinit. MDP");
       reset.type = "button";
+      reset.disabled = user.id === currentUser.id;
+      reset.title = reset.disabled ? "Modifiez votre mot de passe dans les paramètres du compte" : "Définir un nouveau mot de passe";
       reset.addEventListener("click", async () => {
         const password = window.prompt(`Nouveau mot de passe temporaire pour ${user.username} (8 caractères minimum) :`);
         if (password === null) return;
@@ -2125,7 +2127,8 @@ async function showAdminUser(userId) {
     }
     detail.append(element("h3", "settings-section-heading", `Sessions actives (${sessions.length})`));
     for (const session of sessions) detail.append(element("p", "", `Expire le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(session.expiresAt))}`));
-    document.querySelector("#admin-user-dialog").showModal();
+    const dialog = document.querySelector("#admin-user-dialog");
+    if (!dialog.open) dialog.showModal();
   } catch (error) { showToast(error.message || "Dossier indisponible.", "error"); }
 }
 
@@ -2511,6 +2514,7 @@ document.querySelector("#admin-settings-save").addEventListener("click", async (
       notice: document.querySelector("#admin-notice").value,
     } });
     if (!response.ok) throw new Error(response.payload?.error || "Enregistrement impossible.");
+    await loadAdminPanel();
     showToast("Réglages de la plateforme enregistrés.");
   } catch (error) { showToast(error.message || "Enregistrement impossible.", "error"); }
   finally { button.disabled = false; }

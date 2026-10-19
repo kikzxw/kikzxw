@@ -464,6 +464,9 @@ export class AuthStore {
       if (!target) return authJson(404, { error: "Utilisateur introuvable." });
 
       if (body.password !== undefined) {
+        if (targetId === access.user.id) {
+          return authJson(400, { error: "Utilisez les paramètres du compte pour modifier votre propre mot de passe." });
+        }
         if (typeof body.password !== "string" || body.password.length < MIN_PASSWORD_LENGTH) {
           return authJson(400, { error: `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.` });
         }
@@ -492,6 +495,9 @@ export class AuthStore {
         return authJson(200, { user: this.adminUserView({ ...target, suspended: body.suspended ? 1 : 0 }) });
       }
 
+      if (targetId === access.user.id && body.role !== target.role) {
+        return authJson(400, { error: "Vous ne pouvez pas modifier votre propre rôle." });
+      }
       if (!["admin", "membre"].includes(body.role)) return authJson(400, { error: "Rôle inconnu (attendu : admin ou membre)." });
       if (target.role === "admin" && body.role !== "admin") {
         const admins = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").one().count;
