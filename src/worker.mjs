@@ -159,7 +159,8 @@ export class AuthStore {
           password_hash TEXT NOT NULL,
           role TEXT NOT NULL CHECK (role IN ('admin', 'membre')),
           created_at TEXT NOT NULL,
-          search_count INTEGER NOT NULL DEFAULT 0
+          search_count INTEGER NOT NULL DEFAULT 0,
+          suspended INTEGER NOT NULL DEFAULT 0
         )`,
       );
       sql.exec(
@@ -186,7 +187,81 @@ export class AuthStore {
           created_at TEXT NOT NULL
         )`,
       );
+      sql.exec(
+        `CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        )`,
+      );
+      // Migration for accounts created before the suspension switch existed.
+      try {
+        sql.exec("ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0");
+      } catch {
+        // Column already present — nothing to migrate.
+      }
     });
+  }
+
+  // ---- Platform settings ------------------------------------------------
+
+  readSetting(key, fallback) {
+    const row = this.ctx.storage.sql.exec(
+      "SELECT value FROM settings WHERE key = ?",
+      key,
+    ).toArray()[0];
+    if (!row) return fallback;
+    try {
+      const parsed = JSON.parse(row.value);
+      return parsed === null || parsed === undefined ? fallback : parsed;
+    } catch {
+      return fallback;
+    }
+  }
+
+  writeSetting(key, value) {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      key,
+      JSON.stringify(value),
+    );
+  }
+
+  getSettings() {
+    return {
+      registrationOpen: this.readSetting("registrationOpen", true) !== false,
+      loginMode: ["all", "admins", "closed"].includes(this.readSetting("loginMode", "all"))
+        ? this.readSetting("loginMode", "all")
+        : "all",
+      searchEnabled: this.readSetting("searchEnabled", true) !== false,
+      notice: String(this.readSetting("notice", "") || "").slice(0, 200),
+    };
+  }
+
+  updateSettings(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw Object.assign(new Error("Les réglages doivent être un objet JSON valide."), { status: 400 });
+    }
+    const current = this.getSettings();
+    for (const [key, value] of Object.entries(body)) {
+      if (!(key in current)) continue; // ignore unknown keys
+      if (key === "notice") {
+        if (typeof value !== "string") throw Object.assign(new Error("Le message d'annonce doit être du texte."), { status: 400 });
+        this.writeSetting(key, value.slice(0, 200));
+        continue;
+      }
+      if (key === "loginMode") {
+        if (!["all", "admins", "closed"].includes(value)) {
+          throw Object.assign(new Error("Mode de connexion invalide (attendu : all, admins ou closed)."), { status: 400 });
+        }
+        this.writeSetting(key, value);
+        continue;
+      }
+      if (typeof value !== "boolean") {
+        throw Object.assign(new Error(`Le réglage « ${key} » doit être un booléen.`), { status: 400 });
+      }
+      this.writeSetting(key, value);
+    }
+    return this.getSettings();
   }
 
   async fetch(request) {
@@ -204,10 +279,17 @@ export class AuthStore {
       if (pathname === "/api/auth/me" && request.method === "GET") return this.currentUser(request);
       if (pathname === "/api/auth/logout" && request.method === "POST") return this.logout(request);
       if (pathname === "/api/auth/search-count" && request.method === "POST") return this.incrementSearchCount(request);
+      if (pathname === "/api/settings" && request.method === "GET") return authJson(200, this.getSettings());
+      if (pathname === "/api/admin/settings") return this.adminSettings(request);
+      if (pathname === "/api/admin/logout-all" && request.method === "POST") return this.adminLogoutAll(request);
       if (pathname === "/api/admin/stats" && request.method === "GET") return this.adminStats(request);
       if (pathname === "/api/admin/users") return this.adminUsers(request);
-      const userMatch = /^\/api\/admin\/users\/([0-9a-f-]{36})$/i.exec(pathname);
-      if (userMatch) return this.adminUser(request, userMatch[1]);
+      const userMatch = /^\/api\/admin\/users\/([0-9a-f-]{36})\/sessions$/i.exec(pathname);
+      if (userMatch && request.method === "DELETE") return this.adminRevokeUserSessions(request, userMatch[1]);
+      const savedOwnerMatch = /^\/api\/admin\/users\/([0-9a-f-]{36})\/saved\/([0-9a-f-]{36})$/i.exec(pathname);
+      if (savedOwnerMatch && request.method === "DELETE") return this.adminRemoveSaved(request, savedOwnerMatch[1], savedOwnerMatch[2]);
+      const userMatch2 = /^\/api\/admin\/users\/([0-9a-f-]{36})$/i.exec(pathname);
+      if (userMatch2) return this.adminUser(request, userMatch2[1]);
       if (pathname === "/api/saved") {
         if (request.method === "POST") {
           const limited = await this.checkRateLimit(request, "saved", 30);
@@ -228,9 +310,9 @@ export class AuthStore {
     if (!token) return null;
     const digest = await hashSession(token);
     const row = this.ctx.storage.sql.exec(
-      `SELECT users.id, users.username, users.role, users.created_at, users.search_count
+      `SELECT users.id, users.username, users.role, users.created_at, users.search_count, users.suspended
        FROM sessions JOIN users ON users.id = sessions.user_id
-       WHERE sessions.token_hash = ? AND sessions.expires_at > ?`,
+       WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.suspended = 0`,
       digest,
       Date.now(),
     ).toArray()[0];
@@ -262,6 +344,7 @@ export class AuthStore {
       `SELECT COUNT(*) AS users,
        SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS admins,
        SUM(CASE WHEN role = 'membre' THEN 1 ELSE 0 END) AS membres,
+       SUM(CASE WHEN suspended = 1 THEN 1 ELSE 0 END) AS suspended,
        COALESCE(SUM(search_count), 0) AS searches FROM users`,
     ).one();
     const savedSearches = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM saved_searches").one().count;
@@ -273,32 +356,130 @@ export class AuthStore {
     const access = await this.authorizedUser(request, true);
     if (access.response) return access.response;
     if (request.method !== "GET") return authJson(405, { error: "Méthode non autorisée." });
+    const now = Date.now();
     const rows = this.ctx.storage.sql.exec(
-      "SELECT id, username, role, created_at, search_count FROM users ORDER BY created_at DESC",
+      "SELECT id, username, role, created_at, search_count, suspended FROM users ORDER BY created_at DESC",
     ).toArray();
+    const sessionCounts = new Map();
+    for (const row of this.ctx.storage.sql.exec(
+      "SELECT user_id, COUNT(*) AS count FROM sessions WHERE expires_at > ? GROUP BY user_id",
+      now,
+    ).toArray()) {
+      sessionCounts.set(row.user_id, row.count);
+    }
+    const savedCounts = new Map();
+    for (const row of this.ctx.storage.sql.exec(
+      "SELECT user_id, COUNT(*) AS count FROM saved_searches GROUP BY user_id",
+    ).toArray()) {
+      savedCounts.set(row.user_id, row.count);
+    }
     return authJson(200, { users: rows.map((row) => ({
       id: row.id,
       username: displayUsername(row.username),
       role: row.role,
       createdAt: row.created_at,
       searchCount: row.search_count,
+      suspended: Boolean(row.suspended),
+      sessions: sessionCounts.get(row.id) || 0,
+      savedCount: savedCounts.get(row.id) || 0,
     })) });
+  }
+
+  adminUserView(row) {
+    return {
+      id: row.id,
+      username: displayUsername(row.username),
+      role: row.role,
+      createdAt: row.created_at,
+      searchCount: row.search_count,
+      suspended: Boolean(row.suspended),
+    };
   }
 
   async adminUser(request, targetId) {
     const access = await this.authorizedUser(request, true);
     if (access.response) return access.response;
+    if (request.method === "GET") {
+      const target = this.ctx.storage.sql.exec(
+        "SELECT id, username, role, created_at, search_count, suspended FROM users WHERE id = ?",
+        targetId,
+      ).toArray()[0];
+      if (!target) return authJson(404, { error: "Utilisateur introuvable." });
+      const liveSessions = this.ctx.storage.sql.exec(
+        "SELECT expires_at FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY expires_at DESC",
+        targetId,
+        Date.now(),
+      ).toArray();
+      const saved = this.ctx.storage.sql.exec(
+        "SELECT id, user_id, label, payload, created_at FROM saved_searches WHERE user_id = ? ORDER BY created_at DESC",
+        targetId,
+      ).toArray().map((row) => {
+        let payload = {};
+        try { payload = JSON.parse(row.payload); } catch { payload = {}; }
+        return { id: row.id, userId: row.user_id, label: row.label, payload, createdAt: row.created_at };
+      });
+      return authJson(200, {
+        user: {
+          ...this.adminUserView(target),
+          // Cloudflare deployments do not collect profile e-mail/preferences.
+          email: null,
+          lang: null,
+          timezone: null,
+          datefmt: null,
+        },
+        sessions: liveSessions.map((row) => ({ expiresAt: new Date(row.expires_at).toISOString() })),
+        saved,
+        stats: {
+          searches: target.search_count,
+          savedSearches: saved.length,
+          sessions: liveSessions.length,
+        },
+      });
+    }
     if (request.method === "PATCH") {
       const body = await this.readBody(request);
-      if (!["admin", "membre"].includes(body.role)) return authJson(400, { error: "Rôle inconnu (attendu : admin ou membre)." });
-      const target = this.ctx.storage.sql.exec("SELECT id, username, role, created_at, search_count FROM users WHERE id = ?", targetId).toArray()[0];
+      const target = this.ctx.storage.sql.exec(
+        "SELECT id, username, role, created_at, search_count, suspended FROM users WHERE id = ?",
+        targetId,
+      ).toArray()[0];
       if (!target) return authJson(404, { error: "Utilisateur introuvable." });
+
+      if (body.password !== undefined) {
+        if (typeof body.password !== "string" || body.password.length < MIN_PASSWORD_LENGTH) {
+          return authJson(400, { error: `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.` });
+        }
+        if (body.password.length > 200) return authJson(400, { error: "Le mot de passe est trop long (200 caractères maximum)." });
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const hash = await hashPassword(body.password, salt);
+        this.ctx.storage.sql.exec(
+          "UPDATE users SET salt = ?, password_hash = ? WHERE id = ?",
+          toHex(salt),
+          toHex(hash),
+          targetId,
+        );
+        this.ctx.storage.sql.exec("DELETE FROM sessions WHERE user_id = ?", targetId);
+        return authJson(200, { user: this.adminUserView(target) });
+      }
+
+      if (body.suspended !== undefined) {
+        if (typeof body.suspended !== "boolean") return authJson(400, { error: "Le champ « suspended » doit être un booléen." });
+        if (targetId === access.user.id) return authJson(400, { error: "Vous ne pouvez pas suspendre votre propre compte." });
+        if (body.suspended && target.role === "admin"
+          && this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").one().count <= 1) {
+          return authJson(400, { error: "Impossible de suspendre le dernier administrateur." });
+        }
+        this.ctx.storage.sql.exec("UPDATE users SET suspended = ? WHERE id = ?", body.suspended ? 1 : 0, targetId);
+        if (body.suspended) this.ctx.storage.sql.exec("DELETE FROM sessions WHERE user_id = ?", targetId);
+        return authJson(200, { user: this.adminUserView({ ...target, suspended: body.suspended ? 1 : 0 }) });
+      }
+
+      if (!["admin", "membre"].includes(body.role)) return authJson(400, { error: "Rôle inconnu (attendu : admin ou membre)." });
       if (target.role === "admin" && body.role !== "admin") {
         const admins = this.ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'").one().count;
         if (admins <= 1) return authJson(400, { error: "Impossible de rétrograder le dernier administrateur." });
       }
       this.ctx.storage.sql.exec("UPDATE users SET role = ? WHERE id = ?", body.role, targetId);
-      return authJson(200, { user: { id: target.id, username: displayUsername(target.username), role: body.role, createdAt: target.created_at, searchCount: target.search_count } });
+      return authJson(200, { user: this.adminUserView({ ...target, role: body.role }) });
     }
     if (request.method === "DELETE") {
       if (targetId === access.user.id) return authJson(400, { error: "Vous ne pouvez pas supprimer votre propre compte." });
@@ -313,6 +494,66 @@ export class AuthStore {
       return authJson(200, { user: { id: target.id, username: displayUsername(target.username), role: target.role } });
     }
     return authJson(405, { error: "Méthode non autorisée." });
+  }
+
+  /** GET/PATCH /api/admin/settings — platform switches. */
+  async adminSettings(request) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    if (request.method === "GET") return authJson(200, this.getSettings());
+    if (request.method === "PATCH") {
+      try {
+        const body = await this.readBody(request);
+        return authJson(200, this.updateSettings(body));
+      } catch (error) {
+        return authJson(error.status || 400, { error: error.message || "Réglages invalides." });
+      }
+    }
+    return authJson(405, { error: "Méthode non autorisée." });
+  }
+
+  /** POST /api/admin/logout-all — kill every session but the acting admin's. */
+  async adminLogoutAll(request) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    if (request.method !== "POST") return authJson(405, { error: "Méthode non autorisée." });
+    const keepHash = await hashSession(sessionFromRequest(request) || "");
+    const before = this.ctx.storage.sql.exec(
+      "SELECT COUNT(*) AS count FROM sessions WHERE token_hash != ?",
+      keepHash,
+    ).one().count;
+    this.ctx.storage.sql.exec("DELETE FROM sessions WHERE token_hash != ?", keepHash);
+    return authJson(200, { revoked: before });
+  }
+
+  /** DELETE /api/admin/users/:id/sessions — force logout of one account. */
+  async adminRevokeUserSessions(request, targetId) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    if (request.method !== "DELETE") return authJson(405, { error: "Méthode non autorisée." });
+    const target = this.ctx.storage.sql.exec("SELECT id FROM users WHERE id = ?", targetId).toArray()[0];
+    if (!target) return authJson(404, { error: "Utilisateur introuvable." });
+    const before = this.ctx.storage.sql.exec(
+      "SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?",
+      targetId,
+    ).one().count;
+    this.ctx.storage.sql.exec("DELETE FROM sessions WHERE user_id = ?", targetId);
+    return authJson(200, { revoked: before });
+  }
+
+  /** DELETE /api/admin/users/:id/saved/:savedId — drop one saved search. */
+  async adminRemoveSaved(request, targetId, savedId) {
+    const access = await this.authorizedUser(request, true);
+    if (access.response) return access.response;
+    if (request.method !== "DELETE") return authJson(405, { error: "Méthode non autorisée." });
+    const existing = this.ctx.storage.sql.exec(
+      "SELECT id FROM saved_searches WHERE id = ? AND user_id = ?",
+      savedId,
+      targetId,
+    ).toArray()[0];
+    if (!existing) return authJson(404, { error: "Recherche enregistrée introuvable." });
+    this.ctx.storage.sql.exec("DELETE FROM saved_searches WHERE id = ?", savedId);
+    return authJson(200, { ok: true });
   }
 
   async saved(request) {
@@ -418,6 +659,9 @@ export class AuthStore {
         return authJson(409, { error: "Ce nom d'utilisateur est déjà pris." });
       }
       const isFirstUser = users.exec("SELECT COUNT(*) AS count FROM users").one().count === 0;
+      if (!isFirstUser && this.readSetting("registrationOpen", true) === false) {
+        return authJson(403, { error: "Les inscriptions sont actuellement fermées." });
+      }
       if (isFirstUser) {
         if (!this.env.ADMIN_BOOTSTRAP_TOKEN) {
           return authJson(503, { error: "Initialisez le premier administrateur avec le secret ADMIN_BOOTSTRAP_TOKEN." });
@@ -468,8 +712,11 @@ export class AuthStore {
       if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH || password.length > 200) {
         return authJson(400, { error: "Nom d'utilisateur ou mot de passe incorrect." });
       }
+      if (this.getSettings().loginMode === "closed") {
+        return authJson(503, { error: "Les connexions sont actuellement fermées." });
+      }
       const row = this.ctx.storage.sql.exec(
-        "SELECT id, username, salt, password_hash, role, created_at, search_count FROM users WHERE username = ? COLLATE NOCASE",
+        "SELECT id, username, salt, password_hash, role, created_at, search_count, suspended FROM users WHERE username = ? COLLATE NOCASE",
         username,
       ).toArray()[0];
       if (!row) return authJson(401, { error: "Nom d'utilisateur ou mot de passe incorrect." });
@@ -478,12 +725,19 @@ export class AuthStore {
       if (!safeEqual(candidate, fromHex(row.password_hash))) {
         return authJson(401, { error: "Nom d'utilisateur ou mot de passe incorrect." });
       }
+      if (row.suspended) {
+        return authJson(403, { error: "Ce compte est suspendu. Contactez un administrateur." });
+      }
+      if (this.getSettings().loginMode === "admins" && row.role !== "admin") {
+        return authJson(403, { error: "Les connexions sont actuellement réservées aux administrateurs." });
+      }
       const user = {
         id: row.id,
         username: displayUsername(row.username),
         role: row.role,
         createdAt: row.created_at,
         searchCount: row.search_count,
+        suspended: Boolean(row.suspended),
       };
       const token = await this.createSession(user.id);
       return authJson(200, { user }, { "Set-Cookie": this.sessionCookie(token, request) });
@@ -517,9 +771,9 @@ export class AuthStore {
     if (!token) return authJson(401, { error: "Session inactive ou expirée." });
     const digest = await hashSession(token);
     const row = this.ctx.storage.sql.exec(
-      `SELECT users.id, users.username, users.role, users.created_at, users.search_count
+      `SELECT users.id, users.username, users.role, users.created_at, users.search_count, users.suspended
        FROM sessions JOIN users ON users.id = sessions.user_id
-       WHERE sessions.token_hash = ? AND sessions.expires_at > ?`,
+       WHERE sessions.token_hash = ? AND sessions.expires_at > ? AND users.suspended = 0`,
       digest,
       Date.now(),
     ).toArray()[0];
@@ -536,6 +790,7 @@ export class AuthStore {
         role: row.role,
         createdAt: row.created_at,
         searchCount: row.search_count,
+        suspended: Boolean(row.suspended),
       },
     });
   }
@@ -673,6 +928,22 @@ async function requireSession(request, env) {
   return response.status === 200 ? null : response;
 }
 
+/**
+ * Read the platform switches through the auth store. Returns null when the
+ * store is unavailable or answers something unexpected (fail open: the
+ * session check already happened).
+ */
+async function fetchSettings(request, env) {
+  try {
+    const response = await handleAuth(new Request(new URL("/api/settings", request.url), { method: "GET" }), env);
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 async function applySearchLimit(request, env) {
   if (!env.SEARCH_RATE_LIMITER) {
     return jsonResponse(503, { error: "La limitation de débit des recherches n'est pas configurée." });
@@ -697,7 +968,11 @@ export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
     if (pathname === "/api/auth/search-count") return jsonResponse(404, { error: "Endpoint inconnu." });
-    if (pathname.startsWith("/api/auth/") || pathname.startsWith("/api/admin/") || pathname === "/api/saved" || pathname.startsWith("/api/saved/")) {
+    if (pathname === "/api/settings"
+      || pathname.startsWith("/api/auth/")
+      || pathname.startsWith("/api/admin/")
+      || pathname === "/api/saved"
+      || pathname.startsWith("/api/saved/")) {
       if (!["GET", "POST", "PATCH", "DELETE"].includes(request.method)) {
         return jsonResponse(405, { error: "Méthode non autorisée." });
       }
@@ -709,6 +984,10 @@ export default {
       }
       const sessionError = await requireSession(request, env);
       if (sessionError) return secureResponse(sessionError, "no-store");
+      const settings = await fetchSettings(request, env);
+      if (settings && settings.searchEnabled === false) {
+        return jsonResponse(503, { error: "Les recherches sont actuellement suspendues par un administrateur." });
+      }
       const rateLimitError = await applySearchLimit(request, env);
       if (rateLimitError) return rateLimitError;
       return handleSearch(request, env);

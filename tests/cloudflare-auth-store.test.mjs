@@ -9,6 +9,7 @@ function createSqlStorage() {
   const users = [];
   const sessions = [];
   const limits = new Map();
+  const settings = new Map();
   const cursor = (rows = []) => ({
     toArray: () => rows,
     one: () => rows[0],
@@ -18,6 +19,14 @@ function createSqlStorage() {
     exec(statement, ...values) {
       const query = statement.replace(/\s+/g, " ").trim();
       if (query.startsWith("CREATE ")) return cursor();
+      if (query.startsWith("ALTER ")) return cursor(); // migration simulée
+      if (query === "SELECT value FROM settings WHERE key = ?") {
+        return settings.has(values[0]) ? [{ value: settings.get(values[0]) }] : [];
+      }
+      if (query.startsWith("INSERT INTO settings")) {
+        settings.set(values[0], values[1]);
+        return cursor();
+      }
       if (query === "DELETE FROM auth_rate_limits WHERE window_started_at <= ? AND bucket != ?") {
         for (const [bucket, row] of limits) {
           if (row.window_started_at <= values[0] && bucket !== values[1]) limits.delete(bucket);
@@ -43,7 +52,7 @@ function createSqlStorage() {
       if (query === "SELECT COUNT(*) AS count FROM users") return cursor([{ count: users.length }]);
       if (query.startsWith("INSERT INTO users")) {
         const [id, username, salt, password_hash, role, created_at] = values;
-        users.push({ id, username, salt, password_hash, role, created_at, search_count: 0 });
+        users.push({ id, username, salt, password_hash, role, created_at, search_count: 0, suspended: 0 });
         return cursor();
       }
       if (query === "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)") {
@@ -57,18 +66,19 @@ function createSqlStorage() {
         }
         return cursor();
       }
-      if (query === "SELECT id, username, salt, password_hash, role, created_at, search_count FROM users WHERE username = ? COLLATE NOCASE") {
+      if (query === "SELECT id, username, salt, password_hash, role, created_at, search_count, suspended FROM users WHERE username = ? COLLATE NOCASE") {
         return cursor(users.filter((user) => user.username.toLowerCase() === values[0].toLowerCase()));
       }
       if (query.includes("FROM sessions JOIN users")) {
         const session = sessions.find((entry) => entry.token_hash === values[0] && entry.expires_at > values[1]);
         const user = users.find((entry) => entry.id === session?.user_id);
-        return cursor(user ? [{
+        return cursor(user && !user.suspended ? [{
           id: user.id,
           username: user.username,
           role: user.role,
           created_at: user.created_at,
           search_count: user.search_count,
+          suspended: user.suspended,
         }] : []);
       }
       if (query.startsWith("UPDATE sessions SET expires_at = ?")) {

@@ -446,17 +446,30 @@
             <article class="stat-card"><div class="stat-top"><span>COMPTES</span><span class="stat-icon red" aria-hidden="true">●</span></div><div class="stat-value" id="admin-stat-users" aria-live="polite">00</div><div class="stat-foot">Utilisateurs enregistrés.</div></article>
             <article class="stat-card"><div class="stat-top"><span>RECHERCHES TOTALES</span><span class="stat-icon red" aria-hidden="true">⌕</span></div><div class="stat-value" id="admin-stat-searches" aria-live="polite">00</div><div class="stat-foot">Recherches lancées par tous les comptes.</div></article>
             <article class="stat-card"><div class="stat-top"><span>RACCOURCIS</span><span class="stat-icon red" aria-hidden="true">★</span></div><div class="stat-value" id="admin-stat-saved" aria-live="polite">00</div><div class="stat-foot">Recherches enregistrées.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>SESSIONS ACTIVES</span><span class="stat-icon red" aria-hidden="true">◉</span></div><div class="stat-value" id="admin-stat-sessions" aria-live="polite">00</div><div class="stat-foot">Connexions en cours.</div></article>
+            <article class="stat-card"><div class="stat-top"><span>COMPTES SUSPENDUS</span><span class="stat-icon red" aria-hidden="true">!</span></div><div class="stat-value" id="admin-stat-suspended" aria-live="polite">00</div><div class="stat-foot">Accès temporairement bloqués.</div></article>
           </div>
+          <section class="panel admin-panel" aria-labelledby="admin-controls-title">
+            <div class="panel-heading"><div><span class="section-kicker">PLATEFORME</span><h2 id="admin-controls-title">Accès et fonctionnement</h2></div></div>
+            <div class="admin-controls-grid">
+              <label class="admin-control"><span><strong>Inscriptions</strong><small>Autoriser la création de nouveaux comptes</small></span><input id="admin-registration-open" type="checkbox"></label>
+              <label class="admin-control"><span><strong>Recherches</strong><small>Autoriser les recherches de tous les comptes</small></span><input id="admin-search-enabled" type="checkbox"></label>
+              <label class="field"><span>CONNEXIONS</span><select id="admin-login-mode"><option value="all">Tous les comptes</option><option value="admins">Administrateurs seulement</option><option value="closed">Connexions fermées</option></select></label>
+              <label class="field"><span>MESSAGE D’ANNONCE (200 CARACTÈRES)</span><input id="admin-notice" maxlength="200" placeholder="Aucun message"></label>
+            </div>
+            <div class="form-actions"><button class="button button-primary" id="admin-settings-save" type="button"><span class="button-label">Enregistrer les réglages</span><span>→</span></button><button class="text-button admin-delete" id="admin-logout-all" type="button">Déconnecter tous les autres comptes</button></div>
+          </section>
           <section class="panel admin-panel" aria-labelledby="admin-panel-title">
             <div class="panel-heading"><div><span class="section-kicker">UTILISATEURS</span><h2 id="admin-panel-title">Comptes et rôles</h2></div><button class="text-button" id="admin-refresh" type="button">Rafraîchir <span>↻</span></button></div>
             <div class="admin-table-wrap">
               <table class="admin-table">
-                <thead><tr><th scope="col">UTILISATEUR</th><th scope="col">ID</th><th scope="col">RÔLE</th><th scope="col">RECH.</th><th scope="col">CRÉÉ LE</th><th scope="col">ACTIONS</th></tr></thead>
+                <thead><tr><th scope="col">UTILISATEUR</th><th scope="col">ID</th><th scope="col">RÔLE</th><th scope="col">ÉTAT</th><th scope="col">RECH.</th><th scope="col">SESSIONS</th><th scope="col">SAUVEGARDES</th><th scope="col">CRÉÉ LE</th><th scope="col">ACTIONS</th></tr></thead>
                 <tbody id="admin-users-body" aria-live="polite"></tbody>
               </table>
             </div>
             <div id="admin-empty" class="empty-state hidden" aria-live="polite"><span class="empty-symbol">⚙</span><strong>Aucun compte</strong></div>
           </section>
+          <dialog class="confirm-dialog admin-detail-dialog" id="admin-user-dialog" aria-labelledby="admin-user-title"><div class="confirm-dialog-card"><h2 id="admin-user-title">Dossier utilisateur</h2><div id="admin-user-detail" class="admin-user-detail"></div><div class="form-actions"><button class="button button-primary" id="admin-user-close" type="button"><span class="button-label">Fermer</span><span>×</span></button></div></div></dialog>
           <footer class="page-footer" role="contentinfo"><span>KIKZXW · OSINT</span><span>Seuls les administrateurs peuvent modifier les rôles</span></footer>
         </section>
       </main>

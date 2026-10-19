@@ -1932,27 +1932,58 @@ async function refreshSession() {
       throw new Error(payload.error);
     }
     applySession(ok ? payload.user : null);
+    if (!ok) syncPublicAuthSettings();
   } catch (error) {
     applySession(null);
     showToast(error.message || "Impossible de vérifier la session.", "error");
   }
 }
 
+async function syncPublicAuthSettings() {
+  try {
+    const response = await apiRequest("/api/settings");
+    if (!response.ok) return;
+    const settings = response.payload;
+    const loginAllowed = settings.loginMode !== "closed";
+    const registerAllowed = Boolean(settings.registrationOpen);
+    const loginTab = document.querySelector("#auth-tab-login");
+    const registerTab = document.querySelector("#auth-tab-register");
+    loginTab.classList.toggle("hidden", !loginAllowed);
+    registerTab.classList.toggle("hidden", !registerAllowed);
+    const note = document.querySelector("#auth-note");
+    note.textContent = settings.notice || (!loginAllowed && !registerAllowed
+      ? "Les connexions et les inscriptions sont actuellement fermées."
+      : !loginAllowed ? "Les connexions sont actuellement réservées aux administrateurs."
+        : !registerAllowed ? "Les inscriptions sont actuellement fermées." : "Accès à la plateforme.");
+    document.querySelector("#auth-submit").disabled = !loginAllowed && !registerAllowed;
+    if (authMode === "login" && !loginAllowed && registerAllowed) setAuthMode("register");
+    if (authMode === "register" && !registerAllowed && loginAllowed) setAuthMode("login");
+  } catch { /* Les endpoints d'authentification restent la source d'autorité. */ }
+}
+
 async function loadAdminPanel() {
   if (currentUser?.role !== "admin") return;
   try {
-    const [statsResponse, usersResponse] = await Promise.all([
+    const [statsResponse, usersResponse, settingsResponse] = await Promise.all([
       apiRequest("/api/admin/stats"),
       apiRequest("/api/admin/users"),
+      apiRequest("/api/admin/settings"),
     ]);
-    if (!statsResponse.ok || !usersResponse.ok) {
-      const error = statsResponse.payload?.error || usersResponse.payload?.error || "Chargement de l'administration impossible.";
-      if (statsResponse.status === 401 || usersResponse.status === 401) applySession(null);
+    if (!statsResponse.ok || !usersResponse.ok || !settingsResponse.ok) {
+      const error = statsResponse.payload?.error || usersResponse.payload?.error || settingsResponse.payload?.error || "Chargement de l'administration impossible.";
+      if ([statsResponse, usersResponse, settingsResponse].some((response) => response.status === 401)) applySession(null);
       throw new Error(error);
     }
     document.querySelector("#admin-stat-users").textContent = String(statsResponse.payload.users ?? 0).padStart(2, "0");
     document.querySelector("#admin-stat-searches").textContent = String(statsResponse.payload.searches ?? 0).padStart(2, "0");
     document.querySelector("#admin-stat-saved").textContent = String(statsResponse.payload.savedSearches ?? 0).padStart(2, "0");
+    document.querySelector("#admin-stat-sessions").textContent = String(statsResponse.payload.sessions ?? 0).padStart(2, "0");
+    document.querySelector("#admin-stat-suspended").textContent = String(statsResponse.payload.suspended ?? 0).padStart(2, "0");
+    const settings = settingsResponse.payload;
+    document.querySelector("#admin-registration-open").checked = settings.registrationOpen;
+    document.querySelector("#admin-search-enabled").checked = settings.searchEnabled;
+    document.querySelector("#admin-login-mode").value = settings.loginMode;
+    document.querySelector("#admin-notice").value = settings.notice || "";
 
     const body = document.querySelector("#admin-users-body");
     const users = Array.isArray(usersResponse.payload.users) ? usersResponse.payload.users : [];
@@ -1961,7 +1992,11 @@ async function loadAdminPanel() {
     document.querySelector(".admin-table-wrap").classList.toggle("hidden", users.length === 0);
     for (const user of users) {
       const row = element("tr");
-      const username = element("td", "admin-username", user.username);
+      const username = element("td", "admin-username");
+      const detailButton = element("button", "text-button", user.username);
+      detailButton.type = "button";
+      detailButton.addEventListener("click", () => showAdminUser(user.id));
+      username.append(detailButton);
       const id = element("td", "admin-user-id", user.id);
       const roleCell = element("td");
       const role = element("select", "admin-role");
@@ -1988,7 +2023,24 @@ async function loadAdminPanel() {
         }
       });
       roleCell.append(role);
+      const statusCell = element("td");
+      const suspend = element("button", "text-button", user.suspended ? "Suspendu" : "Actif");
+      suspend.type = "button";
+      suspend.classList.toggle("admin-delete", !user.suspended);
+      suspend.disabled = user.id === currentUser.id;
+      suspend.title = user.suspended ? "Réactiver ce compte" : "Suspendre ce compte et fermer ses sessions";
+      suspend.addEventListener("click", async () => {
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "PATCH", body: { suspended: !user.suspended } });
+          if (!response.ok) throw new Error(response.payload?.error || "Modification du compte impossible.");
+          showToast(user.suspended ? `Compte ${user.username} réactivé.` : `Compte ${user.username} suspendu.`);
+          await loadAdminPanel();
+        } catch (error) { showToast(error.message || "Modification du compte impossible.", "error"); }
+      });
+      statusCell.append(suspend);
       const searchCount = element("td", "", String(user.searchCount ?? 0));
+      const sessions = element("td", "", String(user.sessions ?? 0));
+      const savedCount = element("td", "", String(user.savedCount ?? 0));
       const created = new Date(user.createdAt);
       const createdAt = element("td", "", Number.isNaN(created.getTime())
         ? "—"
@@ -2009,12 +2061,72 @@ async function loadAdminPanel() {
         }
       });
       actions.append(remove);
-      row.append(username, id, roleCell, searchCount, createdAt, actions);
+      const reset = element("button", "text-button", "Réinit. MDP");
+      reset.type = "button";
+      reset.addEventListener("click", async () => {
+        const password = window.prompt(`Nouveau mot de passe temporaire pour ${user.username} (8 caractères minimum) :`);
+        if (password === null) return;
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "PATCH", body: { password } });
+          if (!response.ok) throw new Error(response.payload?.error || "Réinitialisation impossible.");
+          showToast(`Mot de passe réinitialisé. Les sessions de ${user.username} ont été fermées.`);
+          await loadAdminPanel();
+        } catch (error) { showToast(error.message || "Réinitialisation impossible.", "error"); }
+      });
+      const revoke = element("button", "text-button", "Fermer sessions");
+      revoke.type = "button";
+      revoke.addEventListener("click", async () => {
+        if (!await confirmAction(`Fermer toutes les sessions de ${user.username} ?`)) return;
+        try {
+          const response = await apiRequest(`/api/admin/users/${encodeURIComponent(user.id)}/sessions`, { method: "DELETE" });
+          if (!response.ok) throw new Error(response.payload?.error || "Déconnexion impossible.");
+          showToast(`${response.payload.revoked} session(s) fermée(s).`);
+          await loadAdminPanel();
+        } catch (error) { showToast(error.message || "Déconnexion impossible.", "error"); }
+      });
+      actions.append(reset, revoke);
+      row.append(username, id, roleCell, statusCell, searchCount, sessions, savedCount, createdAt, actions);
       body.append(row);
     }
   } catch (error) {
     showToast(error.message || "Chargement de l'administration impossible.", "error");
   }
+}
+
+async function showAdminUser(userId) {
+  try {
+    const response = await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}`);
+    if (!response.ok) throw new Error(response.payload?.error || "Dossier indisponible.");
+    const { user, sessions, saved, stats } = response.payload;
+    const detail = document.querySelector("#admin-user-detail");
+    detail.replaceChildren();
+    const info = element("dl", "admin-detail-grid");
+    const fields = [["Identifiant", user.id], ["Nom", user.username], ["E-mail", user.email || "—"], ["Rôle", user.role], ["État", user.suspended ? "Suspendu" : "Actif"], ["Langue", user.lang || "—"], ["Fuseau horaire", user.timezone || "—"], ["Créé le", user.createdAt || "—"], ["Recherches", stats.searches], ["Sessions actives", stats.sessions]];
+    for (const [label, value] of fields) { info.append(element("dt", "", label), element("dd", "", String(value))); }
+    detail.append(info, element("h3", "settings-section-heading", `Recherches enregistrées (${saved.length})`));
+    if (!saved.length) detail.append(element("p", "muted", "Aucune recherche enregistrée."));
+    for (const item of saved) {
+      const card = element("article", "admin-saved-item");
+      const heading = element("strong", "", item.label);
+      const date = element("small", "", item.createdAt || "");
+      const criteria = element("pre", "", JSON.stringify(item.payload || {}, null, 2));
+      const remove = element("button", "text-button admin-delete", "Supprimer");
+      remove.type = "button";
+      remove.addEventListener("click", async () => {
+        if (!await confirmAction(`Supprimer la recherche enregistrée « ${item.label} » ?`)) return;
+        const result = await apiRequest(`/api/admin/users/${encodeURIComponent(userId)}/saved/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        if (!result.ok) { showToast(result.payload?.error || "Suppression impossible.", "error"); return; }
+        showToast("Recherche enregistrée supprimée.");
+        await showAdminUser(userId);
+        await loadAdminPanel();
+      });
+      card.append(heading, date, criteria, remove);
+      detail.append(card);
+    }
+    detail.append(element("h3", "settings-section-heading", `Sessions actives (${sessions.length})`));
+    for (const session of sessions) detail.append(element("p", "", `Expire le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(session.expiresAt))}`));
+    document.querySelector("#admin-user-dialog").showModal();
+  } catch (error) { showToast(error.message || "Dossier indisponible.", "error"); }
 }
 
 const SETTINGS_KEY = "kikzxw.settings";
@@ -2388,6 +2500,31 @@ userMenuDropdown.addEventListener("keydown", (event) => {
 });
 
 document.querySelector("#admin-refresh").addEventListener("click", loadAdminPanel);
+document.querySelector("#admin-settings-save").addEventListener("click", async () => {
+  const button = document.querySelector("#admin-settings-save");
+  button.disabled = true;
+  try {
+    const response = await apiRequest("/api/admin/settings", { method: "PATCH", body: {
+      registrationOpen: document.querySelector("#admin-registration-open").checked,
+      searchEnabled: document.querySelector("#admin-search-enabled").checked,
+      loginMode: document.querySelector("#admin-login-mode").value,
+      notice: document.querySelector("#admin-notice").value,
+    } });
+    if (!response.ok) throw new Error(response.payload?.error || "Enregistrement impossible.");
+    showToast("Réglages de la plateforme enregistrés.");
+  } catch (error) { showToast(error.message || "Enregistrement impossible.", "error"); }
+  finally { button.disabled = false; }
+});
+document.querySelector("#admin-logout-all").addEventListener("click", async () => {
+  if (!await confirmAction("Déconnecter tous les autres comptes ? Votre session administrateur restera active.")) return;
+  try {
+    const response = await apiRequest("/api/admin/logout-all", { method: "POST" });
+    if (!response.ok) throw new Error(response.payload?.error || "Déconnexion impossible.");
+    showToast(`${response.payload.revoked} session(s) révoquée(s).`);
+    await loadAdminPanel();
+  } catch (error) { showToast(error.message || "Déconnexion impossible.", "error"); }
+});
+document.querySelector("#admin-user-close").addEventListener("click", () => document.querySelector("#admin-user-dialog").close());
 document.querySelector("#save-search").addEventListener("click", saveCurrentSearch);
 document.querySelector("#result-filter").addEventListener("input", applyResultFilter);
 document.querySelector("#save-search-form").addEventListener("submit", (event) => {

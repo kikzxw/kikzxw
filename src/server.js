@@ -510,6 +510,11 @@ async function handleRegister(request, response) {
     }
 
     const firstUser = store.userCount() === 0;
+    // Admin can close sign-ups; the bootstrap (very first account) stays possible.
+    if (!firstUser && !store.getSettings().registrationOpen) {
+      sendJson(response, 403, { error: "Les inscriptions sont actuellement fermées." });
+      return;
+    }
     if (firstUser && !ADMIN_BOOTSTRAP_TOKEN) {
       sendJson(response, 503, { error: "Initialisez le premier administrateur avec le secret ADMIN_BOOTSTRAP_TOKEN." });
       return;
@@ -542,7 +547,17 @@ async function handleLogin(request, response) {
       return;
     }
 
+    // Platform-wide login switch (closed = nobody, admins = admins only).
+    if (store.getSettings().loginMode === "closed") {
+      sendJson(response, 503, { error: "Les connexions sont actuellement fermées." });
+      return;
+    }
+
     const user = store.authenticate(body.username, body.password);
+    if (store.getSettings().loginMode === "admins" && user.role !== "admin") {
+      sendJson(response, 403, { error: "Les connexions sont actuellement réservées aux administrateurs." });
+      return;
+    }
     const token = store.createSession(user.id);
     response.setHeader("Set-Cookie", sessionCookie(token, request));
     sendJson(response, 200, { user: store.publicUser(user) });
@@ -578,23 +593,66 @@ async function handleAdminUsers(request, response, pathname) {
     return;
   }
 
-  if (request.method === "GET") {
-    sendJson(response, 200, { users: store.listUsers() });
+  if (request.method === "GET" && pathname === "/api/admin/users") {
+    sendJson(response, 200, { users: store.listUsersForAdmin() });
     return;
   }
 
-  const targetMatch = /^\/api\/admin\/users\/([0-9a-f-]{36})$/.exec(pathname);
-  if (!targetMatch) {
+  const targetId = /^\/api\/admin\/users\/([0-9a-f-]{36})/.exec(pathname)?.[1];
+  if (!targetId) {
     sendJson(response, 404, { error: "Endpoint inconnu." });
     return;
   }
-  const targetId = targetMatch[1];
+
+  // Sub-resources: /api/admin/users/:id/sessions and /api/admin/users/:id/saved/:savedId
+  const sessionsMatch = /^\/api\/admin\/users\/[0-9a-f-]{36}\/sessions$/.exec(pathname);
+  if (sessionsMatch) {
+    if (request.method !== "DELETE") {
+      sendJson(response, 405, { error: "Méthode non autorisée." });
+      return;
+    }
+    try {
+      const revoked = store.revokeUserSessions(targetId);
+      sendJson(response, 200, { revoked });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+
+  const savedMatch = /^\/api\/admin\/users\/[0-9a-f-]{36}\/saved\/([0-9a-f-]{36})$/.exec(pathname);
+  if (savedMatch) {
+    if (request.method !== "DELETE") {
+      sendJson(response, 405, { error: "Méthode non autorisée." });
+      return;
+    }
+    try {
+      store.removeSaved(targetId, savedMatch[1]);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+
+  // Reject unknown sub-paths instead of falling through to the base resource.
+  if (pathname !== `/api/admin/users/${targetId}`) {
+    sendJson(response, 404, { error: "Endpoint inconnu." });
+    return;
+  }
 
   try {
+    if (request.method === "GET") {
+      sendJson(response, 200, store.adminUserDetail(targetId));
+      return;
+    }
     if (request.method === "PATCH") {
       const body = await readAuthBody(request);
       if (body.password !== undefined) {
         const user = store.resetPassword(targetId, body.password);
+        sendJson(response, 200, { user });
+      } else if (body.suspended !== undefined) {
+        const user = store.setSuspended(session.user, targetId, body.suspended);
         sendJson(response, 200, { user });
       } else {
         const user = store.setRole(session.user, targetId, body.role);
@@ -611,6 +669,51 @@ async function handleAdminUsers(request, response, pathname) {
   } catch (error) {
     sendAuthError(response, error);
   }
+}
+
+/** GET /api/admin/settings · PATCH /api/admin/settings — platform switches. */
+async function handleAdminSettings(request, response) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Authentification requise." });
+    return;
+  }
+  if (session.user.role !== "admin") {
+    sendJson(response, 403, { error: "Réservé aux administrateurs." });
+    return;
+  }
+  if (request.method === "GET") {
+    sendJson(response, 200, store.getSettings());
+    return;
+  }
+  if (request.method === "PATCH") {
+    try {
+      const body = await readAuthBody(request);
+      sendJson(response, 200, store.updateSettings(body));
+    } catch (error) {
+      sendAuthError(response, error);
+    }
+    return;
+  }
+  sendJson(response, 405, { error: "Méthode non autorisée." });
+}
+
+/**
+ * POST /api/admin/logout-all — force-logout of every account except the
+ * acting admin's own session.
+ */
+function handleLogoutAll(request, response) {
+  const session = readSession(request);
+  if (!session) {
+    sendJson(response, 401, { error: "Authentification requise." });
+    return;
+  }
+  if (session.user.role !== "admin") {
+    sendJson(response, 403, { error: "Réservé aux administrateurs." });
+    return;
+  }
+  const revoked = store.revokeAllSessions(session.token);
+  sendJson(response, 200, { revoked });
 }
 
 function handleAdminStats(request, response) {
@@ -929,8 +1032,16 @@ function handleRequest(request, response) {
     handleLogout(request, response);
   } else if (request.method === "GET" && pathname === "/api/auth/me") {
     handleMe(request, response);
+  } else if (request.method === "GET" && pathname === "/api/settings") {
+    // Public subset of the platform switches (auth screen needs it).
+    sendJson(response, 200, store.getSettings());
   } else if (pathname.startsWith("/api/user/")) {
     handleUserProfile(request, response, pathname);
+  } else if (pathname === "/api/admin/settings") {
+    handleAdminSettings(request, response);
+  } else if (pathname === "/api/admin/logout-all") {
+    if (request.method !== "POST") sendJson(response, 405, { error: "Méthode non autorisée." });
+    else handleLogoutAll(request, response);
   } else if (pathname === "/api/admin/stats") {
     if (request.method !== "GET") sendJson(response, 405, { error: "Méthode non autorisée." });
     else handleAdminStats(request, response);
@@ -942,6 +1053,8 @@ function handleRequest(request, response) {
     const session = readSession(request);
     if (!session) {
       sendJson(response, 401, { error: "Connexion requise pour effectuer une recherche." });
+    } else if (!store.getSettings().searchEnabled) {
+      sendJson(response, 503, { error: "Les recherches sont actuellement suspendues par un administrateur." });
     } else if (isRateLimitedByIp(request, RATE_LIMIT_SEARCH, "search")) {
       sendJson(response, 429, { error: "Trop de requêtes. Réessayez dans une minute." }, { "Retry-After": "60" });
     } else {

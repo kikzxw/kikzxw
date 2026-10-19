@@ -1739,6 +1739,23 @@ h3 { color: var(--text-dim); font: 600 13px/1.4 var(--display); }
 .admin-delete   { color: var(--error); }
 .admin-delete:hover { color: #ffc1b8; }
 .admin-role:disabled, .admin-delete:disabled { opacity: .45; cursor: not-allowed; }
+.admin-controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: end; }
+.admin-control { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 54px; border: 1px solid var(--line); border-radius: var(--radius-xs); background: var(--panel-inset); padding: 10px 12px; }
+.admin-control span { display: grid; gap: 4px; }
+.admin-control strong { color: var(--text); font-size: 12px; }
+.admin-control small { color: var(--text-muted); font-size: 10px; }
+.admin-control input { width: 18px; height: 18px; accent-color: var(--accent-bright); }
+.admin-panel .form-actions { flex-wrap: wrap; margin-top: 16px; }
+.admin-table { min-width: 1060px; }
+.admin-detail-dialog { width: min(720px, calc(100vw - 28px)); max-width: none; max-height: 85vh; overflow: auto; }
+.admin-detail-dialog > div { padding: 20px; }
+.admin-detail-dialog h2 { margin: 0 0 16px; color: var(--text); font-size: 18px; }
+.admin-detail-grid { display: grid; grid-template-columns: minmax(120px, .7fr) 1.3fr; gap: 8px 14px; }
+.admin-detail-grid dt { color: var(--text-muted); font-size: 11px; }
+.admin-detail-grid dd { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 12px; }
+.admin-saved-item { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; border: 1px solid var(--line); border-radius: var(--radius-xs); margin: 10px 0; padding: 12px; }
+.admin-saved-item small { color: var(--text-muted); }
+.admin-saved-item pre { grid-column: 1 / -1; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); font: 10px var(--mono); }
 
 /* ── Paramètres ──────────────────────────────────────────── */
 .settings-panel { margin-bottom: 16px; }

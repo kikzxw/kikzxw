@@ -6,6 +6,7 @@ const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, "..", "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const SAVED_FILE = path.join(DATA_DIR, "saved.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SAVED_PER_USER = 50;
 const USERNAME_PATTERN = /^[a-z0-9._-]{3,24}$/;
@@ -114,6 +115,73 @@ function persistJson(file, data) {
 
 let users = loadJson(USERS_FILE, []);
 let savedSearches = loadJson(SAVED_FILE, []);
+
+// ---------------------------------------------------------------------------
+// Platform settings (persisted in settings.json, admin-controlled)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SETTINGS = Object.freeze({
+  registrationOpen: true,   // open sign-ups for new accounts
+  loginMode: "all",          // "all" | "admins" | "closed"
+  searchEnabled: true,       // pause all searches when false
+  notice: "",                // optional banner shown on the auth screen
+});
+
+const LOGIN_MODES = new Set(["all", "admins", "closed"]);
+
+function loadSettings() {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.warn(`Fichier de réglages illisible (${error.message}) — valeurs par défaut utilisées.`);
+    }
+    return { ...DEFAULT_SETTINGS };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_SETTINGS };
+  return sanitizeSettings(raw);
+}
+
+function sanitizeSettings(raw) {
+  return {
+    registrationOpen: typeof raw.registrationOpen === "boolean" ? raw.registrationOpen : DEFAULT_SETTINGS.registrationOpen,
+    loginMode: LOGIN_MODES.has(raw.loginMode) ? raw.loginMode : DEFAULT_SETTINGS.loginMode,
+    searchEnabled: typeof raw.searchEnabled === "boolean" ? raw.searchEnabled : DEFAULT_SETTINGS.searchEnabled,
+    notice: typeof raw.notice === "string" ? raw.notice.slice(0, 200) : DEFAULT_SETTINGS.notice,
+  };
+}
+
+let settings = loadSettings();
+
+function getSettings() {
+  return { ...settings };
+}
+
+function updateSettings(patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw authError(400, "Les réglages doivent être un objet JSON valide.");
+  }
+  const next = { ...settings };
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in DEFAULT_SETTINGS)) continue; // ignore unknown keys
+    if (key === "notice") {
+      if (typeof value !== "string") throw authError(400, "Le message d'annonce doit être du texte.");
+      next.notice = value.slice(0, 200);
+      continue;
+    }
+    if (key === "loginMode") {
+      if (!LOGIN_MODES.has(value)) throw authError(400, "Mode de connexion invalide (attendu : all, admins ou closed).");
+      next.loginMode = value;
+      continue;
+    }
+    if (typeof value !== "boolean") throw authError(400, `Le réglage « ${key} » doit être un booléen.`);
+    next[key] = value;
+  }
+  settings = next;
+  persistJson(SETTINGS_FILE, settings);
+  return { ...settings };
+}
 const sessions = new Map(loadJson(SESSIONS_FILE, [])
   .filter((session) => session && /^[a-f0-9]{64}$/.test(session.tokenHash)
     && typeof session.userId === "string" && Number.isFinite(session.expiresAt))
@@ -272,6 +340,22 @@ function publicUser(user) {
     role: user.role,
     createdAt: user.createdAt,
     searchCount: user.searchCount || 0,
+    suspended: Boolean(user.suspended),
+  };
+}
+
+/**
+ * Admin-only view: everything the platform knows about an account
+ * (email and profile preferences included).
+ */
+function adminUser(user) {
+  if (!user) return null;
+  return {
+    ...publicUser(user),
+    email: user.email || null,
+    lang: user.lang || null,
+    timezone: user.timezone || null,
+    datefmt: user.datefmt || null,
   };
 }
 
@@ -313,6 +397,9 @@ function authenticate(username, password) {
   }
   // Successful authentication — clear the failure counter
   clearAuthRateLimit(normalized);
+  if (user.suspended) {
+    throw authError(403, "Ce compte est suspendu. Contactez un administrateur.");
+  }
   return user;
 }
 
@@ -369,11 +456,111 @@ function incrementSearchCount(userId) {
   persistJson(USERS_FILE, users);
 }
 
+// ---------------------------------------------------------------------------
+// Admin: full account visibility and control
+// ---------------------------------------------------------------------------
+
+/** Number of live sessions for one user. */
+function sessionCountFor(userId) {
+  const now = Date.now();
+  let count = 0;
+  for (const session of sessions.values()) {
+    if (session.userId === userId && session.expiresAt > now) count += 1;
+  }
+  return count;
+}
+
+/** Admin list: every field of every account, plus its live session count. */
+function listUsersForAdmin() {
+  return users.map((user) => ({
+    ...adminUser(user),
+    sessions: sessionCountFor(user.id),
+    savedCount: listSaved(user.id).length,
+  }));
+}
+
+/** Full dossier on one account: profile, live sessions and saved searches. */
+function adminUserDetail(targetId) {
+  const target = findUserById(targetId);
+  if (!target) throw authError(404, "Utilisateur introuvable.");
+  const now = Date.now();
+  const liveSessions = [];
+  for (const session of sessions.values()) {
+    if (session.userId === targetId && session.expiresAt > now) {
+      liveSessions.push({ expiresAt: new Date(session.expiresAt).toISOString() });
+    }
+  }
+  return {
+    user: adminUser(target),
+    sessions: liveSessions,
+    saved: listSaved(targetId),
+    stats: {
+      searches: target.searchCount || 0,
+      savedSearches: listSaved(targetId).length,
+      sessions: liveSessions.length,
+    },
+  };
+}
+
+/** Suspend or reinstate an account. Suspended users are logged out at once. */
+function setSuspended(actor, targetId, suspended) {
+  if (typeof suspended !== "boolean") throw authError(400, "Le champ « suspended » doit être un booléen.");
+  const target = findUserById(targetId);
+  if (!target) throw authError(404, "Utilisateur introuvable.");
+  if (target.id === actor.id) throw authError(400, "Vous ne pouvez pas suspendre votre propre compte.");
+  if (suspended && target.role === "admin" && users.filter((user) => user.role === "admin").length <= 1) {
+    throw authError(400, "Impossible de suspendre le dernier administrateur.");
+  }
+  target.suspended = suspended;
+  if (suspended) {
+    for (const [tokenHash, session] of sessions) {
+      if (session.userId === targetId) sessions.delete(tokenHash);
+    }
+    persistSessions();
+  }
+  persistJson(USERS_FILE, users);
+  return adminUser(target);
+}
+
+/** Revoke every live session of one user (force logout). Returns the count. */
+function revokeUserSessions(targetId) {
+  const target = findUserById(targetId);
+  if (!target) throw authError(404, "Utilisateur introuvable.");
+  let revoked = 0;
+  for (const [tokenHash, session] of sessions) {
+    if (session.userId === targetId) {
+      sessions.delete(tokenHash);
+      revoked += 1;
+    }
+  }
+  if (revoked) persistSessions();
+  return revoked;
+}
+
+/**
+ * Revoke every session except `keepToken` (the acting admin's own session).
+ * Returns the number of sessions revoked.
+ */
+function revokeAllSessions(keepToken) {
+  const keepHash = typeof keepToken === "string" && /^[a-f0-9]{64}$/.test(keepToken)
+    ? crypto.createHash("sha256").update(keepToken).digest("hex")
+    : null;
+  let revoked = 0;
+  for (const tokenHash of sessions.keys()) {
+    if (keepHash && tokenHash === keepHash) continue;
+    sessions.delete(tokenHash);
+    revoked += 1;
+  }
+  if (revoked) persistSessions();
+  return revoked;
+}
+
 function stats() {
   return {
     users: users.length,
     admins: users.filter((user) => user.role === "admin").length,
     membres: users.filter((user) => user.role === "membre").length,
+    suspended: users.filter((user) => user.suspended).length,
     savedSearches: savedSearches.length,
     sessions: sessions.size,
     searches: users.reduce((sum, user) => sum + (user.searchCount || 0), 0),
@@ -415,6 +602,12 @@ function getSession(token) {
   if (!user) {
     sessions.delete(tokenHash);
     // Immediate persist — orphan session removed for security
+    persistSessions();
+    return null;
+  }
+  if (user.suspended) {
+    // Suspended accounts lose their sessions immediately.
+    sessions.delete(tokenHash);
     persistSessions();
     return null;
   }
@@ -598,15 +791,23 @@ function deleteOwnAccount(userId) {
 module.exports = {
   ROLES,
   publicUser,
+  adminUser,
   createUser,
   userCount,
   authenticate,
   findUserById,
   listUsers,
+  listUsersForAdmin,
+  adminUserDetail,
   setRole,
+  setSuspended,
+  revokeUserSessions,
+  revokeAllSessions,
   deleteUser,
   incrementSearchCount,
   stats,
+  getSettings,
+  updateSettings,
   createSession,
   getSession,
   revokeSession,
